@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Hotel, Train, Compass, UtensilsCrossed, Camera, 
-  CheckSquare, Square, Shield, Sparkles, AlertCircle, ArrowRight 
+  CheckSquare, Square, Shield, Sparkles, AlertCircle, ArrowRight, CheckCircle2 
 } from 'lucide-react';
 import { SCOPE_CATEGORIES } from '../../data/scopeCategories';
+import { fetchScopePreview } from '../../services/api';
 
 const ICON_MAP = {
   Hotel,
@@ -18,8 +19,32 @@ export default function ScopeSelector({
   setSelectedCategories,
   tripBrief,
   onOpenConfirmation,
-  onBackToPrompt
+  onBackToPrompt,
+  onOpenQuestionnaire
 }) {
+  const [backendPreview, setBackendPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadPreview() {
+      setPreviewLoading(true);
+      try {
+        const data = await fetchScopePreview(tripBrief, selectedCategories);
+        if (isMounted) {
+          setBackendPreview(data);
+        }
+      } catch (err) {
+        // Graceful fallback to local calculation if backend is unreachable
+        if (isMounted) setBackendPreview(null);
+      } finally {
+        if (isMounted) setPreviewLoading(false);
+      }
+    }
+    loadPreview();
+    return () => { isMounted = false; };
+  }, [tripBrief, selectedCategories]);
+
   const toggleCategory = (id) => {
     setSelectedCategories(prev => {
       if (prev.includes(id)) {
@@ -31,9 +56,11 @@ export default function ScopeSelector({
     });
   };
 
-  const totalQueries = SCOPE_CATEGORIES
-    .filter(cat => selectedCategories.includes(cat.id))
-    .reduce((sum, cat) => sum + cat.queriesEstimate, 0);
+  const totalQueries = backendPreview
+    ? backendPreview.estimated_total_queries
+    : SCOPE_CATEGORIES
+        .filter(cat => selectedCategories.includes(cat.id))
+        .reduce((sum, cat) => sum + cat.queriesEstimate, 0);
 
   const totalSources = SCOPE_CATEGORIES
     .filter(cat => selectedCategories.includes(cat.id))
@@ -58,24 +85,41 @@ export default function ScopeSelector({
           <div className="flex items-center gap-2">
             <button
               onClick={onBackToPrompt}
-              className="text-xs font-mono uppercase text-white/70 hover:text-white px-3 py-1.5 rounded-full bg-white/10 transition-colors"
+              className="text-xs font-mono uppercase text-white/70 hover:text-white px-3.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
             >
               &larr; Edit Prompt
             </button>
+            {onOpenQuestionnaire && (
+              <button
+                onClick={onOpenQuestionnaire}
+                className="text-xs font-mono uppercase text-[#FFE600] hover:text-white px-3.5 py-1.5 rounded-full bg-[#FFE600]/10 hover:bg-[#FFE600]/20 border border-[#FFE600]/30 transition-colors"
+              >
+                Customize Inputs
+              </button>
+            )}
           </div>
         </div>
 
         {/* Current Trip Brief Bar */}
         <div className="mt-4 p-4 rounded-2xl bg-black/35 backdrop-blur-md border border-white/15 flex flex-wrap items-center justify-between gap-4 text-xs">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <span className="font-mono text-white/50 uppercase">TARGET:</span>
             <span className="font-bold text-white text-sm bg-white/10 px-3 py-1 rounded-full border border-white/15">
-              {tripBrief.destination || "Kyoto, Japan"}
+              {tripBrief.destination || "Destination"}
             </span>
             <span className="font-mono text-white/50 uppercase">DURATION:</span>
             <span className="font-bold text-[#FFE600]">{tripBrief.durationDays || 5} Days</span>
             <span className="font-mono text-white/50 uppercase">STYLE:</span>
-            <span className="text-white/80">{tripBrief.budgetTier || "Balanced Explorer"}</span>
+            <span className="text-white/80">{tripBrief.travelStyle || tripBrief.budgetTier || "Balanced Explorer"}</span>
+            {tripBrief.budgetTarget && (
+              <>
+                <span className="font-mono text-white/50 uppercase">BUDGET CAP:</span>
+                <span className="font-bold text-amber-300 bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-400/30">
+                  {tripBrief.budgetCurrency === 'USD' ? '$' : `${tripBrief.budgetCurrency || 'USD'} `}
+                  {Number(tripBrief.budgetTarget).toLocaleString()} {tripBrief.budgetCurrency || 'USD'}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-3 font-mono text-[11px] text-white/70">
@@ -85,6 +129,12 @@ export default function ScopeSelector({
             <span className="px-2.5 py-1 rounded-md bg-white/10 text-white/80">
               ~{totalSources} SOURCES
             </span>
+            {backendPreview && (
+              <span className="hidden sm:inline-flex items-center gap-1 text-emerald-400 text-[10px]">
+                <CheckCircle2 className="w-3 h-3" />
+                Backend Preview Verified (0 Ext. Calls)
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -99,6 +149,11 @@ export default function ScopeSelector({
           {SCOPE_CATEGORIES.map((cat) => {
             const isSelected = selectedCategories.includes(cat.id);
             const Icon = ICON_MAP[cat.icon] || Compass;
+
+            // Check if backend has a dedicated plan for this category
+            const backendCategoryPlan = backendPreview?.category_plans?.find(
+              p => p.category_id === cat.id
+            );
 
             return (
               <div
@@ -116,9 +171,16 @@ export default function ScopeSelector({
                       <div className={`p-2 rounded-xl ${isSelected ? 'bg-[#FFE600] text-black' : 'bg-white/10 text-white'}`}>
                         <Icon className="w-5 h-5" />
                       </div>
-                      <h3 className="font-bold text-white text-base">
-                        {cat.name}
-                      </h3>
+                      <div>
+                        <h3 className="font-bold text-white text-base">
+                          {cat.name}
+                        </h3>
+                        {cat.id === 'attractions' && (
+                          <span className="text-[10px] font-mono text-emerald-300 font-semibold block">
+                            ● Live TinyFish Ready
+                          </span>
+                        )}
+                      </div>
                     </div>
                     {isSelected ? (
                       <CheckSquare className="w-5 h-5 text-[#FFE600]" />
@@ -128,13 +190,15 @@ export default function ScopeSelector({
                   </div>
 
                   <p className="text-xs text-white/70 mb-4 leading-relaxed">
-                    {cat.description}
+                    {backendCategoryPlan ? backendCategoryPlan.description : cat.description}
                   </p>
                 </div>
 
                 <div className="pt-3 border-t border-white/10">
                   <div className="flex items-center justify-between text-[11px] font-mono text-white/60 mb-2">
-                    <span>Queries: ~{cat.queriesEstimate}</span>
+                    <span>
+                      Queries: ~{backendCategoryPlan ? backendCategoryPlan.planned_queries.length : cat.queriesEstimate}
+                    </span>
                     <span>Sources: {cat.sourcesCount}</span>
                   </div>
                   <div className="flex flex-wrap gap-1">

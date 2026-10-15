@@ -50,15 +50,19 @@ export default function ScopeConfirmModal({
           <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-3 font-mono text-xs">
             <div className="flex justify-between items-center pb-2 border-b border-white/10">
               <span className="text-white/50 uppercase">TARGET DESTINATION:</span>
-              <span className="text-white font-bold">{tripBrief.destination || "Kyoto, Japan"}</span>
+              <span className="text-white font-bold">{tripBrief.destination || "Destination"}</span>
             </div>
             <div className="flex justify-between items-center pb-2 border-b border-white/10">
               <span className="text-white/50 uppercase">DURATION & GROUP:</span>
-              <span className="text-[#FFE600] font-bold">{tripBrief.durationDays || 5} Days • {tripBrief.groupSize || "Romantic Couple"}</span>
+              <span className="text-[#FFE600] font-bold">{tripBrief.durationDays || 5} Days • {tripBrief.groupType || tripBrief.groupSize || "Romantic Couple"}</span>
             </div>
             <div className="flex justify-between items-center pb-2 border-b border-white/10">
               <span className="text-white/50 uppercase">BUDGET & TRANSIT:</span>
-              <span className="text-white">{tripBrief.budgetTier || "Balanced Explorer"} • {tripBrief.transportPreference || "Scenic Trains"}</span>
+              <span className="text-white">
+                {tripBrief.budgetTarget
+                  ? `Cap: $${Number(tripBrief.budgetTarget).toLocaleString()} ${tripBrief.budgetCurrency || 'USD'} (${tripBrief.travelStyle || tripBrief.budgetTier || 'Balanced Explorer'})`
+                  : (tripBrief.travelStyle || tripBrief.budgetTier || "Balanced Explorer")} • {tripBrief.transportPreference || "Scenic Rail & Regional Transit"}
+              </span>
             </div>
             <div className="pt-1">
               <span className="text-white/50 uppercase block mb-2">AUTHORIZED RESEARCH SCOPE:</span>
@@ -77,7 +81,7 @@ export default function ScopeConfirmModal({
           <div className="p-3.5 rounded-xl bg-blue-950/60 border border-blue-400/30 flex items-start gap-3 text-xs text-blue-200">
             <Cpu className="w-4 h-4 text-[#FFE600] shrink-0 mt-0.5" />
             <p>
-              <strong className="text-white">AZINHACK '26 Architecture Note:</strong> In this prototype session, the frontend will orchestrate ~{totalQueries} simulated research traces and display realistic, source-backed itinerary data with strict separation from mock services.
+              <strong className="text-white">AZINHACK '26 Live Agent Pipeline:</strong> External research requires this explicit confirmation. Once confirmed, TripPilot invokes <code className="text-[#FFE600] font-mono">POST /api/trips/research</code> to execute real TinyFish web queries for <strong className="text-white">{tripBrief.destination}</strong> with preserved source citations and zero fabricated results.
             </p>
           </div>
         </div>

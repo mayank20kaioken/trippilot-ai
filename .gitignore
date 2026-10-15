@@ -27,9 +27,18 @@ dist-ssr
 .env
 .env.*
 !.env.example
+!backend/.env.example
 
 # Python backend
 .venv/
 venv/
+backend/venv/
+backend/.venv/
+backend/.env
+backend/.env.*
+!backend/.env.example
+
 __pycache__/
 *.py[cod]
+.pytest_cache/
+

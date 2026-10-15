@@ -12,22 +12,36 @@ export default function ItineraryTimeline({ days }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <span className="text-xs font-mono uppercase tracking-widest text-[#FFE600] block mb-1">
+            ITINERARY PACING (ESTIMATED OUTLINE)
+          </span>
+          <h3 className="text-2xl font-black text-white font-editorial">
+            Day-by-Day Flow & Route Sequence
+          </h3>
+        </div>
+        <div className="text-xs font-mono text-white/50 bg-black/40 px-3 py-1.5 rounded-full border border-white/10">
+          * Outlines are structured based on verified attractions & regional travel pacing
+        </div>
+      </div>
+
       {/* Day Selector Pills */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+      <div className="flex flex-wrap items-center gap-2 pb-2">
         {days.map((day, idx) => (
           <button
             key={day.day}
             onClick={() => setActiveDayIdx(idx)}
-            className={`px-5 py-3 rounded-2xl text-left shrink-0 transition-all border ${
+            className={`px-4 py-2.5 rounded-2xl text-left transition-all border ${
               activeDayIdx === idx
                 ? 'bg-[#FFE600] text-black border-[#FFE600] shadow-lg font-bold'
                 : 'bg-black/30 text-white/80 border-white/10 hover:bg-white/10'
             }`}
           >
-            <div className="text-[11px] font-mono uppercase tracking-wider opacity-80">
-              DAY {day.day}
+            <div className="text-[10px] font-mono uppercase tracking-wider opacity-80">
+              DAY {day.day} {day.theme?.includes('Flexible') ? '• FLEXIBLE' : ''}
             </div>
-            <div className="text-sm font-semibold truncate max-w-[140px]">
+            <div className="text-xs sm:text-sm font-semibold max-w-[240px] truncate" title={day.area}>
               {day.area}
             </div>
           </button>
@@ -38,20 +52,20 @@ export default function ItineraryTimeline({ days }) {
       <div className="p-4 rounded-2xl bg-[#091547]/80 border border-white/15 flex flex-wrap items-center justify-between gap-4 text-xs">
         <div>
           <span className="text-[10px] font-mono uppercase tracking-wider text-[#FFE600] block mb-0.5">
-            THEME & FOCUS
+            {currentDay.theme || "THEME & FOCUS"}
           </span>
           <h4 className="text-base font-bold text-white font-editorial">
             Day {currentDay.day}: {currentDay.title}
           </h4>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 text-white/70 font-mono text-[11px]">
+        <div className="flex flex-wrap items-center gap-2.5 text-white/75 font-mono text-[11px]">
           <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-full">
-            <Footprints className="w-3.5 h-3.5 text-[#FFE600]" />
+            <Footprints className="w-3.5 h-3.5 text-[#FFE600] shrink-0" />
             <span>{currentDay.walkingPace}</span>
           </div>
           <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-full">
-            <Train className="w-3.5 h-3.5 text-blue-400" />
+            <Train className="w-3.5 h-3.5 text-blue-400 shrink-0" />
             <span>{currentDay.transitTip}</span>
           </div>
         </div>

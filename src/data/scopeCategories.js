@@ -1,9 +1,9 @@
 export const SCOPE_CATEGORIES = [
   {
     id: 'stays',
-    name: 'Boutique Stays & Ryokans',
+    name: 'Boutique Stays & Heritage Hotels',
     shortName: 'Stays',
-    description: 'Scans verified boutique hotels, heritage stays, and design ryokans matching noise & walking comfort criteria.',
+    description: 'Scans verified boutique hotels, heritage lodges, and neighborhood accommodations matching comfort and transit criteria.',
     queriesEstimate: 14,
     sourcesCount: 8,
     icon: 'Hotel',
@@ -14,29 +14,29 @@ export const SCOPE_CATEGORIES = [
     id: 'transport',
     name: 'Optimized Transit & Rail',
     shortName: 'Transport',
-    description: 'Calculates high-speed rail passes, regional transit passes, airport express routes, and daily step pacing.',
+    description: 'Calculates regional rail passes, local transit options, airport express routes, and daily walking pacing.',
     queriesEstimate: 22,
     sourcesCount: 12,
     icon: 'Train',
     recommended: true,
-    dataPoints: ['JR Pass vs IC card arbitrage', 'Walking fatigue pacing', 'Optimal transfer junctions']
+    dataPoints: ['Rail passes vs local ticketing', 'Walking fatigue pacing', 'Optimal transfer junctions']
   },
   {
     id: 'attractions',
-    name: 'Attractions & Hidden Sanctuaries',
+    name: 'Attractions & Cultural Sights',
     shortName: 'Attractions',
     description: 'Identifies cultural landmarks alongside crowd-free neighborhood gems and timed entrance slots.',
     queriesEstimate: 28,
     sourcesCount: 16,
     icon: 'Compass',
     recommended: true,
-    dataPoints: ['Crowd avoidance time-windows', 'UNESCO cultural context', 'Historic relevance notes']
+    dataPoints: ['Crowd avoidance time-windows', 'Cultural context', 'Historic relevance notes']
   },
   {
     id: 'food',
-    name: 'Culinary & Secret Dining',
+    name: 'Culinary & Regional Dining',
     shortName: 'Food & Dining',
-    description: 'Maps reservation-worthy local kitchens, hidden matcha tea houses, and authentic regional specialty spots.',
+    description: 'Maps reservation-worthy local kitchens, neighborhood bakeries, and authentic regional culinary specialties.',
     queriesEstimate: 31,
     sourcesCount: 19,
     icon: 'UtensilsCrossed',

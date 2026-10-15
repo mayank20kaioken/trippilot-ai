@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, Check, ArrowRight, ArrowLeft, MapPin, Calendar, 
   DollarSign, Users, Train, Sparkles, Compass, Heart 
@@ -12,7 +12,7 @@ const POPULAR_DESTINATIONS = [
 const BUDGET_TIERS = [
   { id: 'Backpacker', label: 'Backpacker / Value', range: '$50 - $120 / day', desc: 'Hostels, local transit, market stalls' },
   { id: 'Balanced Explorer', label: 'Balanced Explorer (Recommended)', range: '$180 - $350 / day', desc: 'Boutique hotels, rail passes, mixed dining' },
-  { id: 'Luxury Comfort', label: 'Luxury Comfort', range: '$450 - $800 / day', desc: 'Heritage ryokans & villas, fine dining, private transfers' },
+  { id: 'Luxury Comfort', label: 'Luxury Comfort', range: '$450 - $800 / day', desc: 'Heritage hotels & villas, fine dining, private transfers' },
   { id: 'Bespoke Haute-Luxe', label: 'Bespoke Haute-Luxe', range: '$1000+ / day', desc: '5-star suites, private guides, Michelin tables' }
 ];
 
@@ -24,16 +24,16 @@ const GROUP_SIZES = [
 ];
 
 const TRANSPORT_PREFERENCES = [
-  { id: 'Scenic Rail & High-Speed Shinkansen', label: 'Scenic Trains & Rail', desc: 'Passes, metro, zero highway driving' },
+  { id: 'Scenic Rail & Regional Transit', label: 'Scenic Rail & Regional Transit', desc: 'Passes, metro, zero highway driving' },
   { id: 'Self-Drive Rental Roadtrip', label: 'Self-Drive Rental', desc: 'Total freedom, scenic pull-offs' },
   { id: 'Private Shuttles & Ferries', label: 'Private Shuttles & Ferries', desc: 'Water taxis, door-to-door comfort' },
   { id: 'Eco-Transit & Walking Focus', label: 'Eco-Transit & Walking', desc: 'Low-carbon, bikes & footpaths' }
 ];
 
 const INTEREST_TAGS = [
-  "Zen Sanctuaries & Shrines", "Secret Dining & Hidden Bars", 
-  "Alpine Hiking & Nature", "Wellness, Spas & Onsen", 
-  "Cinematic Photography", "Artisan Markets & Ceramics", 
+  "Cultural Sanctuaries & Historic Sites", "Secret Dining & Hidden Bars", 
+  "Alpine Hiking & Nature", "Wellness, Spas & Thermal Baths", 
+  "Cinematic Photography", "Artisan Markets & Crafts", 
   "Historic Architecture", "Local Street Food Crawls"
 ];
 
@@ -52,6 +52,15 @@ export default function QuestionnaireModal({
     transportPreference: "Scenic Rail & High-Speed Shinkansen",
     selectedInterests: ["Zen Sanctuaries & Shrines", "Secret Dining & Hidden Bars", "Cinematic Photography"]
   });
+
+  useEffect(() => {
+    if (initialData) {
+      setFormData(initialData);
+    }
+    if (isOpen) {
+      setStep(1);
+    }
+  }, [initialData, isOpen]);
 
   if (!isOpen) return null;
 

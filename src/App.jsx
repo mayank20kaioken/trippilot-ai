@@ -15,6 +15,9 @@ import LoadingSkeleton from './components/states/LoadingSkeleton';
 
 import { SAMPLE_TRIPS } from './data/mockTrips';
 import { SCOPE_CATEGORIES } from './data/scopeCategories';
+import { getBackendHealth } from './services/api';
+import { parseTripPrompt, normalizeDestination } from './utils/promptParser';
+import { buildActiveTripData } from './utils/tripBuilder';
 
 export default function App() {
   // Navigation & Flow State: 'hero' | 'scope' | 'research' | 'results' | 'empty' | 'error' | 'loading'
@@ -22,31 +25,44 @@ export default function App() {
   
   // Natural-language prompt & mode
   const [prompt, setPrompt] = useState(
-    "5 days exploring Kyoto's quiet Zen temples, morning bamboo trails, hidden matcha spots, and ryokan stays on a balanced budget."
+    "5 days exploring Kyoto's quiet Zen temples, morning bamboo trails, hidden matcha spots, and traditional stays on a balanced budget."
   );
   const [planMode, setPlanMode] = useState('quick'); // 'quick' | 'personalised'
   
   // Selected categories for research scope
   const [selectedCategories, setSelectedCategories] = useState([
-    'stays', 'transport', 'attractions', 'food', 'photo'
+    'attractions', 'stays', 'transport', 'food', 'photo'
   ]);
 
-  // Trip Brief parameters
+  // Structured Trip Brief parameters (strictly separated from raw originalPrompt)
   const [tripBrief, setTripBrief] = useState({
+    originalPrompt: "5 days exploring Kyoto's quiet Zen temples, morning bamboo trails, hidden matcha spots, and traditional stays on a balanced budget.",
+    prompt: "5 days exploring Kyoto's quiet Zen temples, morning bamboo trails, hidden matcha spots, and traditional stays on a balanced budget.",
     destination: "Kyoto, Japan",
     durationDays: 5,
+    budgetTarget: null,
+    budgetCurrency: "USD",
+    travelStyle: "Balanced Explorer",
     budgetTier: "Balanced Explorer",
+    groupType: "Romantic Couple",
     groupSize: "Romantic Couple",
-    transportPreference: "Scenic Rail & High-Speed Shinkansen",
-    selectedInterests: ["Zen Sanctuaries & Shrines", "Secret Dining & Hidden Bars", "Cinematic Photography"]
+    transportPreference: "Scenic Rail & Regional Transit",
+    selectedInterests: ["Cultural Sanctuaries & Historic Sites", "Secret Dining & Hidden Bars", "Cinematic Photography"]
   });
 
-  // Selected sample dataset city
+  // Selected sample dataset city for fallback
   const [selectedCity, setSelectedCity] = useState("Kyoto, Japan");
+
+  // Real research result from backend
+  const [liveResearchResult, setLiveResearchResult] = useState(null);
+  const [useDemoFallback, setUseDemoFallback] = useState(false);
 
   // Modals
   const [isQuestionnaireOpen, setIsQuestionnaireOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+
+  // Backend health status
+  const [backendHealth, setBackendHealth] = useState(null);
 
   // Reduced motion toggle
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -60,44 +76,135 @@ export default function App() {
     }
   }, [reducedMotion]);
 
+  // Check backend health on initial load
+  useEffect(() => {
+    async function checkHealth() {
+      const health = await getBackendHealth();
+      setBackendHealth(health);
+    }
+    checkHealth();
+  }, []);
+
+  // Helper to open questionnaire with parsed prompt fields pre-populated
+  const handleOpenQuestionnaireFromPrompt = () => {
+    const parsed = parseTripPrompt(prompt);
+    setTripBrief(prev => ({
+      ...prev,
+      originalPrompt: parsed.originalPrompt || prompt,
+      prompt: parsed.originalPrompt || prompt,
+      destination: parsed.destination || prev.destination,
+      durationDays: parsed.durationDays || prev.durationDays,
+      budgetTarget: parsed.budgetTarget,
+      budgetCurrency: parsed.budgetCurrency || "USD",
+      travelStyle: parsed.travelStyle || prev.travelStyle || prev.budgetTier,
+      budgetTier: parsed.travelStyle || prev.budgetTier,
+      groupType: parsed.groupType || prev.groupType || prev.groupSize,
+      groupSize: parsed.groupType || prev.groupSize
+    }));
+    setIsQuestionnaireOpen(true);
+  };
+
   // Handler when user submits prompt from Hero
   const handleLaunchScope = () => {
-    // If prompt mentions Amalfi, auto-switch sample city to Amalfi
-    if (prompt.toLowerCase().includes("amalfi") || prompt.toLowerCase().includes("italy")) {
-      setSelectedCity("Amalfi Coast, Italy");
-      setTripBrief(prev => ({
-        ...prev,
-        destination: "Amalfi Coast, Italy",
-        durationDays: 7,
-        budgetTier: "Luxury Comfort"
-      }));
-    } else {
-      setSelectedCity("Kyoto, Japan");
-      setTripBrief(prev => ({
-        ...prev,
-        destination: "Kyoto, Japan",
-        durationDays: 5,
-        budgetTier: "Balanced Explorer"
-      }));
+    const parsed = parseTripPrompt(prompt);
+
+    if (parsed.needsClarification) {
+      // Prompt lacks a clear destination; prompt user via questionnaire modal
+      setIsQuestionnaireOpen(true);
+      return;
     }
+
+    const cleanDestination = parsed.destination;
+    const newDuration = parsed.durationDays;
+    const newTravelStyle = parsed.travelStyle || "Balanced Explorer";
+    const newGroupType = parsed.groupType || "Romantic Couple";
+
+    if (cleanDestination.toLowerCase().includes("amalfi")) {
+      setSelectedCity("Amalfi Coast, Italy");
+    } else if (cleanDestination.toLowerCase().includes("kyoto")) {
+      setSelectedCity("Kyoto, Japan");
+    } else {
+      setSelectedCity(cleanDestination);
+    }
+
+    // Reset any previous live results from an older research run so the new destination is clean
+    setLiveResearchResult(null);
+
+    setTripBrief(prev => ({
+      ...prev,
+      originalPrompt: parsed.originalPrompt,
+      prompt: parsed.originalPrompt,
+      destination: cleanDestination,
+      durationDays: newDuration,
+      budgetTarget: parsed.budgetTarget,
+      budgetCurrency: parsed.budgetCurrency || "USD",
+      travelStyle: newTravelStyle,
+      budgetTier: newTravelStyle,
+      groupType: newGroupType,
+      groupSize: newGroupType,
+      transportPreference: "Scenic Rail & Regional Transit",
+      mode: planMode
+    }));
+
     setCurrentView('scope');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Handler from Questionnaire
+  // Handler from Questionnaire (sanitizes destination even if user typed a full sentence in the Destination field)
   const handleSaveQuestionnaire = (formData) => {
-    setTripBrief(formData);
-    setIsQuestionnaireOpen(false);
-    // Update natural language prompt to reflect custom questionnaire
-    const interestsStr = formData.selectedInterests.slice(0, 3).join(", ");
-    setPrompt(
-      `${formData.durationDays} days in ${formData.destination} tailored for a ${formData.groupSize} with focus on ${interestsStr} via ${formData.transportPreference} (${formData.budgetTier}).`
+    const parsedFromField = parseTripPrompt(formData.destination || '');
+    const parsedFromPrompt = parseTripPrompt(prompt || '');
+
+    const cleanDestination = normalizeDestination(
+      formData.destination,
+      parsedFromPrompt.destination || "Kyoto, Japan"
     );
-    if (formData.destination.toLowerCase().includes("amalfi")) {
+
+    const resolvedDuration = Number(
+      formData.durationDays || parsedFromField.durationDays || parsedFromPrompt.durationDays || 5
+    );
+    const resolvedStyle =
+      formData.budgetTier || formData.travelStyle || parsedFromField.travelStyle || "Balanced Explorer";
+    const resolvedGroup =
+      formData.groupSize || formData.groupType || parsedFromField.groupType || "Romantic Couple";
+    const resolvedBudgetTarget =
+      parsedFromField.budgetTarget ?? parsedFromPrompt.budgetTarget ?? tripBrief.budgetTarget ?? null;
+    const resolvedBudgetCurrency =
+      parsedFromField.budgetCurrency || parsedFromPrompt.budgetCurrency || tripBrief.budgetCurrency || "USD";
+
+    const interestsStr = (formData.selectedInterests || []).slice(0, 3).join(", ");
+    const synthesizedPrompt =
+      prompt && prompt.trim().length > 0
+        ? prompt.trim()
+        : `${resolvedDuration} days in ${cleanDestination} tailored for ${resolvedGroup} with focus on ${interestsStr} via ${formData.transportPreference} (${resolvedStyle}).`;
+
+    const updatedBrief = {
+      ...formData,
+      originalPrompt: synthesizedPrompt,
+      prompt: synthesizedPrompt,
+      destination: cleanDestination,
+      durationDays: resolvedDuration,
+      budgetTarget: resolvedBudgetTarget,
+      budgetCurrency: resolvedBudgetCurrency,
+      travelStyle: resolvedStyle,
+      budgetTier: resolvedStyle,
+      groupType: resolvedGroup,
+      groupSize: resolvedGroup,
+      mode: 'personalised'
+    };
+
+    setLiveResearchResult(null);
+    setTripBrief(updatedBrief);
+    setIsQuestionnaireOpen(false);
+
+    if (cleanDestination.toLowerCase().includes("amalfi")) {
       setSelectedCity("Amalfi Coast, Italy");
-    } else {
+    } else if (cleanDestination.toLowerCase().includes("kyoto")) {
       setSelectedCity("Kyoto, Japan");
+    } else {
+      setSelectedCity(cleanDestination);
     }
+
     setCurrentView('scope');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -105,12 +212,18 @@ export default function App() {
   // Handler from Scope confirmation
   const handleConfirmLaunch = () => {
     setIsConfirmModalOpen(false);
+    setLiveResearchResult(null);
+    setUseDemoFallback(false);
     setCurrentView('research');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Handler on Research pipeline completion
-  const handleResearchComplete = () => {
+  const handleResearchComplete = (realData) => {
+    if (realData) {
+      setLiveResearchResult(realData);
+      setUseDemoFallback(false);
+    }
     if (!reducedMotion) {
       try {
         confetti({
@@ -127,6 +240,13 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Handler when user opts to fallback to demo prototype mode
+  const handleFallbackToDemo = () => {
+    setUseDemoFallback(true);
+    setCurrentView('results');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSimulateError = () => {
     setCurrentView('error');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -138,24 +258,60 @@ export default function App() {
   };
 
   const handleSelectFeaturedDestination = (cityName) => {
+    setLiveResearchResult(null);
     if (cityName.includes("Kyoto")) {
+      const p = "5 days exploring Kyoto's quiet Zen temples, morning bamboo trails, hidden matcha spots, and traditional stays on a balanced budget.";
       setSelectedCity("Kyoto, Japan");
-      setPrompt("5 days exploring Kyoto's quiet Zen temples, morning bamboo trails, hidden matcha spots, and ryokan stays on a balanced budget.");
-      setTripBrief(prev => ({ ...prev, destination: "Kyoto, Japan", durationDays: 5 }));
+      setPrompt(p);
+      setTripBrief(prev => ({
+        ...prev,
+        originalPrompt: p,
+        prompt: p,
+        destination: "Kyoto, Japan",
+        durationDays: 5,
+        budgetTarget: null,
+        travelStyle: "Balanced Explorer",
+        budgetTier: "Balanced Explorer"
+      }));
     } else if (cityName.includes("Amalfi")) {
+      const p = "7 days along the Amalfi Coast and Capri with lemon grove walks, clifftop aperitivos, and scenic ferry transfers for two.";
       setSelectedCity("Amalfi Coast, Italy");
-      setPrompt("7 days along the Amalfi Coast and Capri with lemon grove walks, clifftop aperitivos, and scenic ferry transfers for two.");
-      setTripBrief(prev => ({ ...prev, destination: "Amalfi Coast, Italy", durationDays: 7, budgetTier: "Luxury Comfort" }));
+      setPrompt(p);
+      setTripBrief(prev => ({
+        ...prev,
+        originalPrompt: p,
+        prompt: p,
+        destination: "Amalfi Coast, Italy",
+        durationDays: 7,
+        budgetTarget: null,
+        travelStyle: "Luxury Comfort",
+        budgetTier: "Luxury Comfort",
+        groupType: "Romantic Couple",
+        groupSize: "Romantic Couple"
+      }));
     } else {
-      setPrompt(`7 days exploring ${cityName} with scenic drives, nature trails, and boutique stays.`);
-      setTripBrief(prev => ({ ...prev, destination: cityName, durationDays: 7 }));
+      const p = `7 days exploring ${cityName} with scenic drives, nature trails, and boutique stays.`;
+      setPrompt(p);
+      setTripBrief(prev => ({
+        ...prev,
+        originalPrompt: p,
+        prompt: p,
+        destination: cityName,
+        durationDays: 7,
+        budgetTarget: null
+      }));
     }
     setCurrentView('scope');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Active dataset
-  const activeTripData = SAMPLE_TRIPS[selectedCity] || SAMPLE_TRIPS["Kyoto, Japan"];
+  // Construct Active Dataset (Live findings prioritized when present)
+  const activeTripData = buildActiveTripData({
+    tripBrief,
+    liveResearchResult,
+    useDemoFallback,
+    selectedCity
+  });
 
   return (
     <div className="min-h-screen flex flex-col justify-between editorial-grid-bg relative selection:bg-[#FFE600] selection:text-black">
@@ -165,12 +321,16 @@ export default function App() {
           if (currentView === 'hero') {
             handleLaunchScope();
           } else {
+            setLiveResearchResult(null);
+            setUseDemoFallback(false);
             setCurrentView('hero');
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }
         }}
         currentView={currentView}
         onResetToHome={() => {
+          setLiveResearchResult(null);
+          setUseDemoFallback(false);
           setCurrentView('hero');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
@@ -186,7 +346,7 @@ export default function App() {
             planMode={planMode}
             setPlanMode={setPlanMode}
             onLaunchScope={handleLaunchScope}
-            onOpenQuestionnaire={() => setIsQuestionnaireOpen(true)}
+            onOpenQuestionnaire={handleOpenQuestionnaireFromPrompt}
             onSelectDestination={handleSelectFeaturedDestination}
           />
         )}
@@ -202,16 +362,17 @@ export default function App() {
               setCurrentView('hero');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
+            onOpenQuestionnaire={() => setIsQuestionnaireOpen(true)}
           />
         )}
 
-        {/* VIEW 3: RESEARCH PROGRESS DASHBOARD */}
+        {/* VIEW 3: REAL RESEARCH DASHBOARD */}
         {currentView === 'research' && (
           <ResearchDashboard
             selectedCategories={selectedCategories}
             tripBrief={tripBrief}
             onComplete={handleResearchComplete}
-            onError={handleSimulateError}
+            onFallbackToDemo={handleFallbackToDemo}
           />
         )}
 
@@ -220,6 +381,8 @@ export default function App() {
           <ResultsDashboard
             tripData={activeTripData}
             onReset={() => {
+              setLiveResearchResult(null);
+              setUseDemoFallback(false);
               setCurrentView('hero');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
