@@ -249,6 +249,82 @@ export default function BudgetSummary({ budget }) {
           </div>
         )}
 
+        {/* Alternative Tier Planning Baselines (Honest Tier Comparison) */}
+        {Array.isArray(budget.tierBenchmarks) && budget.tierBenchmarks.length > 0 && (
+          <div className="p-5 rounded-2xl bg-black/40 border border-white/10 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-mono uppercase tracking-wider text-[#FFE600] flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-[#FFE600]" />
+                ILLUSTRATIVE TIER PLANNING BASELINES (NOT LIVE BOOKABLE PRICES)
+              </span>
+              <span className="text-[10px] font-mono text-white/50">
+                Planning benchmarks only • Check real-time inventory
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+              {budget.tierBenchmarks.map((tb, idx) => {
+                const tbAmount = Math.round(tb.totalUsd * multiplier);
+                const isCurrentTier = tb.tier === (budget.travelStyle || 'Balanced Explorer');
+                const isWithinTarget = hasBudgetTarget && tb.totalUsd <= budget.budgetTarget;
+                const isNearTarget = hasBudgetTarget && !isWithinTarget && tb.totalUsd <= budget.budgetTarget * 1.35;
+
+                return (
+                  <div
+                    key={idx}
+                    className={`p-3.5 rounded-xl border flex flex-col justify-between gap-2 ${
+                      isCurrentTier
+                        ? 'bg-[#FFE600]/10 border-[#FFE600]/40'
+                        : 'bg-white/5 border-white/10'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="font-bold text-xs text-white">
+                          {tb.label || tb.tier}
+                        </span>
+                        {isCurrentTier && (
+                          <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-[#FFE600] text-black">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-xl font-black text-white font-mono">
+                          ${tbAmount.toLocaleString()}
+                        </span>
+                        <span className="text-[10px] font-mono text-white/60">
+                          (${Math.round(tb.dailyRate * multiplier)}/day)
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-white/65 mt-1 leading-snug">
+                        {tb.description}
+                      </p>
+                    </div>
+
+                    {hasBudgetTarget && (
+                      <div className="pt-2 border-t border-white/5 text-[10px] font-mono">
+                        {isWithinTarget ? (
+                          <span className="text-emerald-400 font-bold">
+                            ✓ Within requested budget target
+                          </span>
+                        ) : isNearTarget ? (
+                          <span className="text-amber-300">
+                            ~ Near requested budget target
+                          </span>
+                        ) : (
+                          <span className="text-white/45">
+                            Exceeds requested budget target
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Major Exclusions & Methodology Disclosure */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-white/75 leading-relaxed">

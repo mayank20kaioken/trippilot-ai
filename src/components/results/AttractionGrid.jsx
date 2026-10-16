@@ -44,8 +44,11 @@ export default function AttractionGrid({ attractions, destination = "" }) {
 
   if (!attractions || attractions.length === 0) {
     return (
-      <div className="rounded-3xl bg-[#091547]/80 border border-white/15 p-8 text-center text-white/75 font-mono text-sm">
-        No verified attraction findings are available for {destination || "this destination"} yet. Run live research or switch to Demo Prototype Mode to inspect sample landmarks.
+      <div className="rounded-3xl bg-[#091547]/80 border border-white/15 p-8 text-center text-white/75 font-mono text-sm space-y-2">
+        <div className="text-[#FFE600] font-bold text-base">Research Found No Verified Sights</div>
+        <p className="text-white/60 text-xs max-w-md mx-auto">
+          Live research for {destination || "this destination"} completed without identifying confirmed landmarks. The itinerary maintains flexible self-guided exploration windows pending local verification.
+        </p>
       </div>
     );
   }
@@ -127,8 +130,23 @@ export default function AttractionGrid({ attractions, destination = "" }) {
         </div>
       </div>
 
+      {/* Prominent notice when 0 attractions are confirmed in-destination */}
+      {inDestCount === 0 && excursionCount === 0 && unverifiedCount > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-400/40 text-xs text-amber-100 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-bold text-amber-200 text-sm mb-1 uppercase tracking-wider font-mono">
+              Zero Confirmed Sights Inside {destination || "Destination"}
+            </div>
+            <p className="leading-relaxed text-amber-100/90">
+              Live research retrieved web citations, but <strong>did not find enough verified municipal sights</strong> for {destination}. The {unverifiedCount} candidate finding{unverifiedCount > 1 ? 's' : ''} below are marked <strong>Location Unverified</strong> and are not scheduled as confirmed stops in the itinerary timeline.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Excursion & Uncertainty Notice when excursions or unverified locations are present */}
-      {(excursionCount > 0 || unverifiedCount > 0) && (
+      {(excursionCount > 0 || (unverifiedCount > 0 && inDestCount > 0)) && (
         <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-400/30 text-xs text-amber-100/90 flex items-start gap-2.5">
           <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
           <span>
@@ -204,10 +222,17 @@ export default function AttractionGrid({ attractions, destination = "" }) {
 
                 {att.source_url && (
                   <div className="relative z-10 pt-2">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/60 text-white/75 text-[10px] font-mono border border-white/10 max-w-full truncate">
-                      <Globe className="w-3 h-3 text-emerald-400 shrink-0" />
-                      <span className="truncate">{sourceDomain}</span>
-                    </span>
+                    {Boolean((att.source_confidence && att.source_confidence.includes("Social Media")) || /instagram|facebook|tiktok|pinterest/i.test(att.source_url)) ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-950/70 text-amber-300 text-[10px] font-mono border border-amber-400/40 max-w-full truncate" title="Social media citation — lower confidence; independently verify">
+                        <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span className="truncate">{sourceDomain} (Lower Confidence)</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/60 text-white/75 text-[10px] font-mono border border-white/10 max-w-full truncate">
+                        <Globe className="w-3 h-3 text-emerald-400 shrink-0" />
+                        <span className="truncate">{sourceDomain}</span>
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -215,12 +240,18 @@ export default function AttractionGrid({ attractions, destination = "" }) {
               {/* Content */}
               <div className="p-5 flex-1 flex flex-col justify-between">
                 <div>
-                  {/* Geographic Relevance Pill */}
-                  <div className="mb-2">
+                  {/* Geographic Relevance Pill & Verification Warning Pill */}
+                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border max-w-full flex-wrap leading-tight break-words ${geoCfg.badgeClass}`}>
                       <GeoIcon className="w-3 h-3 shrink-0" />
                       <span>{geoCfg.label}</span>
                     </span>
+                    {(att.verification_warning || att.evidence_quality === 'passing_mention') && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border bg-amber-500/20 text-amber-200 border-amber-400/50">
+                        <AlertTriangle className="w-3 h-3 shrink-0 text-amber-300" />
+                        <span>{att.verification_warning || "Location verified; details need confirmation"}</span>
+                      </span>
+                    )}
                   </div>
 
                   <h4 className="font-bold text-white text-lg mb-2 leading-snug break-words">
@@ -252,17 +283,21 @@ export default function AttractionGrid({ attractions, destination = "" }) {
                     <div className="flex items-center gap-1.5 text-[#FFE600] text-[10px] font-mono font-bold uppercase mb-1">
                       <Lightbulb className="w-3.5 h-3.5 shrink-0" />
                       <span>
-                        {geoStatus === 'nearby_excursion'
-                          ? "EXCURSION DISTANCE & TRANSFER CHECK"
-                          : geoStatus === 'unverified_location'
-                            ? "GEOGRAPHIC VERIFICATION REQUIRED"
-                            : isLive
-                              ? "VERIFIED SOURCE ADVISORY"
-                              : "INSIDER HINT"}
+                        {att.verification_warning
+                          ? "EVIDENCE ADVISORY • VERIFY VENUE DETAILS"
+                          : geoStatus === 'nearby_excursion'
+                            ? "EXCURSION DISTANCE & TRANSFER CHECK"
+                            : geoStatus === 'unverified_location'
+                              ? "GEOGRAPHIC VERIFICATION REQUIRED"
+                              : isLive
+                                ? "VERIFIED SOURCE ADVISORY"
+                                : "INSIDER HINT"}
                       </span>
                     </div>
                     <p className="text-[11px] leading-relaxed text-white/80 break-words">
-                      {tipVal}
+                      {att.verification_warning
+                        ? `${tipVal} Venue opening hours, entry rules, and accessibility must be confirmed via the source.`
+                        : tipVal}
                     </p>
                   </div>
 

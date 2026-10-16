@@ -835,6 +835,879 @@ Khardung La is a high mountain pass in the Ladakh region of India serving as the
                 assert att["is_live_result"] is True
 
 
+@pytest.mark.asyncio
+async def test_maldives_temporal_word_isolation_and_destination_cleaning():
+    """
+    Regression Test for Maldives & Temporal Word Isolation:
+    1. TripBrief cleans temporal prefixes ('Next Maldives' -> 'Maldives', 'Maldives next weekend' -> 'Maldives').
+    2. Ordinary destinations with real prefix words ('New York', 'South Korea') are preserved.
+    3. Query planning generates queries using 'Maldives', never 'Next Maldives'.
+    4. Research execution returns destination 'Maldives' without temporal word corruption.
+    """
+    from backend.schemas import TripBrief
+    from backend.services.research_agent import generate_query_plan
+
+    # 1. Schema-level validation and temporal word stripping
+    brief_next = TripBrief(destination="Next Maldives", duration_days=5)
+    assert brief_next.destination == "Maldives", f"Expected 'Maldives', got '{brief_next.destination}'"
+
+    brief_weekend = TripBrief(destination="Maldives next weekend", duration_days=3)
+    assert brief_weekend.destination == "Maldives", f"Expected 'Maldives', got '{brief_weekend.destination}'"
+
+    brief_upcoming = TripBrief(destination="Upcoming Tokyo", duration_days=4)
+    assert brief_upcoming.destination == "Tokyo", f"Expected 'Tokyo', got '{brief_upcoming.destination}'"
+
+    # 2. Ordinary destination names with real geographic words must be preserved
+    for ord_dest in ["New York", "New Delhi", "South Korea", "North Goa", "Costa Rica"]:
+        b = TripBrief(destination=ord_dest, duration_days=5)
+        assert b.destination == ord_dest, f"Ordinary destination '{ord_dest}' must be preserved, got '{b.destination}'"
+
+    # 3. Query planning must never formulate queries targeting 'Next Maldives'
+    plans = generate_query_plan(brief_next, selected_categories=["attractions"])
+    assert len(plans) > 0
+    for plan in plans:
+        for q in plan.planned_queries:
+            assert not q.startswith("Next Maldives"), f"Query must not start with 'Next Maldives': {q}"
+            assert "Maldives" in q
+
+    # 4. End-to-end research execution with Maldives prompt
+    mock_search_results = [
+        {
+            "title": "Top Attractions in Maldives - Male Grand Friday Mosque",
+            "url": "https://visitmaldives.com/attractions",
+            "snippet": "Explore the historic Grand Friday Mosque and coral atolls across the Maldives."
+        }
+    ]
+    mock_fetch_results = [
+        {
+            "url": "https://visitmaldives.com/attractions",
+            "text": """# Sights in Maldives
+### Grand Friday Mosque
+Grand Friday Mosque is a magnificent coral-stone Islamic center in Male, Maldives.
+"""
+        }
+    ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key-for-test"):
+
+        mock_search.return_value = mock_search_results
+        mock_fetch.return_value = mock_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "Next Maldives",
+                    "duration_days": 5,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Romantic Couple",
+                    "prompt": "Plan a next 5 days trip to Maldives under $450",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            assert data["status"] == "completed"
+            assert data["destination"] == "Maldives", f"Expected 'Maldives', got '{data['destination']}'"
+            assert not any("Next Maldives" in a["name"] for a in data["attractions"])
+            for att in data["attractions"]:
+                assert "Maldives" in att["geographic_label"]
+                assert "Next" not in att["geographic_label"]
+
+
+@pytest.mark.asyncio
+async def test_west_bengal_geographic_relevance_taj_mahal_rejection_and_evidence_quality():
+    """
+    Verifies:
+    1. Query generation for West Bengal incorporates primary constituent urban hub (Kolkata).
+    2. Rejects clearly mismatched foreign landmarks (e.g. Taj Mahal in Agra, Amber Fort in Jaipur)
+       even when present on mixed-destination travel pages.
+    3. Accepts genuine West Bengal attractions (Victoria Memorial, Howrah Bridge) grounded in evidence.
+    4. Sights lacking confirmed municipal placement remain 'unverified_location'.
+    5. Deduplicates repeated attractions across multiple sources.
+    6. Does not invent coordinates or travel times.
+    """
+    from backend.services.research_agent import is_geographic_mismatch, generate_query_plan
+
+    # 1. Direct unit verification of is_geographic_mismatch
+    assert is_geographic_mismatch("Taj Mahal", "Located in Agra, Uttar Pradesh", "West Bengal") is True
+    assert is_geographic_mismatch("Amber Fort", "Amer Fort is in Jaipur, Rajasthan", "West Bengal") is True
+    assert is_geographic_mismatch("Victoria Memorial", "Located in Kolkata, West Bengal", "West Bengal") is False
+    assert is_geographic_mismatch("Howrah Bridge", "Spans the Hooghly in Kolkata/Howrah", "West Bengal") is False
+    # Allowed excursion check: Agra IS an allowed excursion for Delhi, but NOT for West Bengal
+    assert is_geographic_mismatch("Taj Mahal", "Day trip to Agra from Delhi", "Delhi") is False
+
+    # 2. Query plan verification for West Bengal
+    brief = TripBrief(
+        destination="West Bengal",
+        duration_days=4,
+        budget_usd=560,
+        traveler_count=2,
+        trip_style="Balanced Exploration"
+    )
+    plans = generate_query_plan(brief, ["attractions"])
+    assert len(plans) == 1
+    planned_queries = plans[0].planned_queries
+    assert any("Kolkata" in q for q in planned_queries), f"Expected Kolkata in planned queries, got: {planned_queries}"
+    assert all("West Bengal" in q for q in planned_queries)
+
+    # 3. Full research pipeline with mixed-destination content
+    mock_search_results = [
+        {
+            "title": "Top 10 Monuments in India",
+            "url": "https://travelguide.com/india/top-monuments",
+            "snippet": "From Taj Mahal in Agra to Victoria Memorial in Kolkata and Amber Fort in Jaipur."
+        },
+        {
+            "title": "Kolkata Sightseeing & Heritage Highlights",
+            "url": "https://kolkatatourism.org/highlights",
+            "snippet": "Visiting Victoria Memorial and Howrah Bridge in Kolkata, West Bengal."
+        }
+    ]
+
+    mock_fetch_results = [
+        {
+            "url": "https://travelguide.com/india/top-monuments",
+            "text": """# Top 10 Monuments in India
+### Taj Mahal
+The Taj Mahal is an ivory-white marble mausoleum on the south bank of the Yamuna river in Agra, Uttar Pradesh.
+
+### Victoria Memorial
+The Victoria Memorial is a large marble building in Kolkata, West Bengal, dedicated to the memory of Queen Victoria.
+
+### Amber Fort
+Amer Fort is a fort located in Amer, Jaipur, Rajasthan, known for its artistic style elements.
+
+### Howrah Bridge
+Howrah Bridge spans the Hooghly River linking Kolkata and Howrah in West Bengal.
+
+### Ancient Riverside Pavilion
+An unverified scenic riverside spot mentioned in passing without municipal location.
+"""
+        },
+        {
+            "url": "https://kolkatatourism.org/highlights",
+            "text": """# Kolkata Sightseeing
+### Victoria Memorial
+Victoria Memorial is a grand landmark in central Kolkata.
+
+### Howrah Bridge
+Iconic cantilever bridge connecting Kolkata with Howrah station.
+"""
+        }
+    ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key-for-test"):
+
+        mock_search.return_value = mock_search_results
+        mock_fetch.return_value = mock_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "West Bengal",
+                    "duration_days": 4,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Romantic Couple",
+                    "prompt": "Plan a 4 days trip to the West Bengal under $560",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            assert data["status"] == "completed"
+            assert data["destination"] == "West Bengal"
+
+            attraction_names = [a["name"] for a in data["attractions"]]
+
+            # Taj Mahal and Amber Fort must be strictly rejected
+            assert not any("Taj Mahal" in name for name in attraction_names), f"Taj Mahal must be rejected, found in: {attraction_names}"
+            assert not any("Amber Fort" in name for name in attraction_names), f"Amber Fort must be rejected, found in: {attraction_names}"
+
+            # Victoria Memorial must be accepted, deduplicated (only 1 card), and verified in_destination
+            vm_items = [a for a in data["attractions"] if "Victoria Memorial" in a["name"]]
+            assert len(vm_items) == 1, f"Expected exactly 1 Victoria Memorial card, got {len(vm_items)}"
+            assert vm_items[0]["geographic_status"] == "in_destination"
+            assert "West Bengal" in vm_items[0]["geographic_label"]
+
+            # Howrah Bridge must be accepted and verified in_destination
+            howrah_items = [a for a in data["attractions"] if "Howrah Bridge" in a["name"]]
+            assert len(howrah_items) == 1
+            assert howrah_items[0]["geographic_status"] == "in_destination"
+
+            # Ancient Riverside Pavilion lacks municipal evidence -> unverified_location
+            unverified_items = [a for a in data["attractions"] if "Ancient Riverside Pavilion" in a["name"]]
+            if unverified_items:
+                assert unverified_items[0]["geographic_status"] == "unverified_location"
+
+
+@pytest.mark.asyncio
+async def test_attraction_evidence_integrity_audit_and_deduplication():
+    """
+    Evidence Integrity Audit Regression Test:
+    1. Two attractions extracted from the same listicle retain distinct, correctly associated evidence.
+    2. A generic multi-attraction excerpt is not treated as strong independent evidence for every attraction.
+    3. A Facebook result does not receive the same confidence as an official attraction source.
+    4. A valid West Bengal landmark remains valid even if its source is weak.
+    5. Taj Mahal and Amber Fort remain rejected for a West Bengal itinerary.
+    6. Distinct source URLs and excerpts are preserved, and weak evidence is upgraded when strong source is available.
+    """
+    from backend.services.research_agent import _is_multi_attraction_list_text
+
+    # Unit check: multi-attraction list detection
+    assert _is_multi_attraction_list_text("Must-see sights include Victoria Memorial, Indian Museum, and Howrah Bridge.", "West Bengal") is True
+    assert _is_multi_attraction_list_text("The Victoria Memorial is a grand marble building in central Kolkata.", "West Bengal") is False
+
+    mock_search_results = [
+        {
+            "title": "Top Places in Kolkata on Facebook",
+            "url": "https://www.facebook.com/kolkatatourism/posts/101202",
+            "snippet": "Must-see places include Victoria Memorial, Indian Museum, Howrah Bridge, and Science City. Follow us!"
+        },
+        {
+            "title": "Top Sights & Heritage Guide to Kolkata - West Bengal Tourism",
+            "url": "https://kolkatatourism.gov.in/heritage-guide",
+            "snippet": "Detailed review of Kolkata's premier historical monuments."
+        }
+    ]
+
+    mock_fetch_results = [
+        {
+            "url": "https://kolkatatourism.gov.in/heritage-guide",
+            "text": """# Kolkata Heritage Guide
+### Highlights
+Must-see places include Victoria Memorial, Indian Museum, and Howrah Bridge.
+
+### Victoria Memorial
+The Victoria Memorial is a large marble building in central Kolkata, constructed between 1906 and 1921. It is dedicated to the memory of Queen Victoria and features 25 grand historical galleries.
+
+### Indian Museum
+Founded in 1814 at the Asiatic Society of Bengal, the Indian Museum in Kolkata is the oldest and largest multipurpose museum in the Asia-Pacific region.
+
+### Taj Mahal in Agra
+The Taj Mahal is an ivory-white marble mausoleum on the south bank of the Yamuna in Agra.
+"""
+        }
+    ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key-for-test"):
+
+        mock_search.return_value = mock_search_results
+        mock_fetch.return_value = mock_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "West Bengal",
+                    "duration_days": 4,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Couple",
+                    "prompt": "Plan a 4-day trip to West Bengal under $560",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            sources = data["sources"]
+            attractions = data["attractions"]
+
+            # 1. Source confidence check: Facebook is Lower Confidence, official tourism is Live Web Citation
+            fb_sources = [s for s in sources if "facebook.com" in s["url"].lower()]
+            assert len(fb_sources) == 1
+            assert "Social Media Citation" in fb_sources[0]["confidence"]
+            assert "Lower Confidence" in fb_sources[0]["confidence"]
+
+            gov_sources = [s for s in sources if "kolkatatourism.gov.in" in s["url"].lower()]
+            assert len(gov_sources) == 1
+            assert "Live Web Citation" in gov_sources[0]["confidence"]
+
+            # 2. Rejection of geographic mismatch: Taj Mahal must NOT appear
+            att_names = [a["name"] for a in attractions]
+            assert not any("Taj Mahal" in n for n in att_names)
+
+            # 3. Two attractions from the same listicle retain distinct, correctly associated evidence
+            vm = next((a for a in attractions if "Victoria Memorial" in a["name"]), None)
+            im = next((a for a in attractions if "Indian Museum" in a["name"]), None)
+            assert vm is not None, f"Expected Victoria Memorial in attractions: {att_names}"
+            assert im is not None, f"Expected Indian Museum in attractions: {att_names}"
+
+            assert vm["description"] != im["description"], "Victoria Memorial and Indian Museum must NOT share identical description"
+            assert "marble building" in vm["description"].lower()
+            assert "oldest and largest" in im["description"].lower()
+
+            # Neither should have inherited the generic multi-attraction intro sentence
+            assert not vm["description"].startswith("Must-see places include")
+            assert not im["description"].startswith("Must-see places include")
+
+            # 4. Victoria Memorial upgraded to official source URL
+            assert "kolkatatourism.gov.in" in vm["source_url"].lower()
+            assert vm["evidence_quality"] == "verified_grounded"
+            assert vm["verification_warning"] is None
+
+            # 5. Valid landmark with only passing mention remains valid in_destination with honest warning
+            hb = next((a for a in attractions if "Howrah Bridge" in a["name"]), None)
+            if hb:
+                assert hb["geographic_status"] == "in_destination"
+                assert hb["evidence_quality"] == "passing_mention"
+                assert hb["verification_warning"] == "Location verified; details need confirmation"
+                assert hb["description"] != vm["description"]
+                assert hb["description"] != im["description"]
+
+
+@pytest.mark.asyncio
+async def test_research_architecture_stabilisation_two_targeted_queries():
+    """
+    Research Architecture Stabilisation Verification:
+    1. Executes 2 targeted primary search queries across different categories/interests.
+    2. Deduplicates search results across both queries by canonical URL.
+    3. Fetches top 2 unique URLs to strictly control TinyFish consumption.
+    4. Triggers at most 1 bounded retry query only when verified in-destination sights are 0.
+    """
+    executed_queries = []
+
+    async def mock_search_tracker(query, location="US", language="en", purpose=None):
+        executed_queries.append(query)
+        if "top attractions" in query:
+            return [
+                {
+                    "title": "Victoria Memorial Official Portal",
+                    "url": "https://kolkatatourism.gov.in/victoria-memorial",
+                    "snippet": "Grand marble monument dedicated to Queen Victoria in central Kolkata."
+                }
+            ]
+        elif "best sights" in query or "unmissable" in query:
+            return [
+                {
+                    "title": "Indian Museum Highlights Guide",
+                    "url": "https://kolkatatourism.gov.in/indian-museum",
+                    "snippet": "Asia's oldest multipurpose museum founded in 1814 in Kolkata."
+                },
+                # Duplicate of first query URL to test cross-query canonical deduplication
+                {
+                    "title": "Victoria Memorial Overview",
+                    "url": "https://kolkatatourism.gov.in/victoria-memorial?utm_source=search",
+                    "snippet": "Central Kolkata marble landmark."
+                }
+            ]
+        else:
+            return []
+
+    async def mock_fetch_tracker(urls, format_type="markdown", purpose=None):
+        return [
+            {
+                "url": u,
+                "text": f"Grounded details and verified opening hours for {u}."
+            }
+            for u in urls
+        ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", side_effect=mock_search_tracker), \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", side_effect=mock_fetch_tracker), \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key"):
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "Kolkata",
+                    "duration_days": 4,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Couple",
+                    "prompt": "Plan a 4-day trip to Kolkata",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            # 1. Exactly 2 targeted primary search queries executed
+            assert len(executed_queries) == 2, f"Expected exactly 2 primary search queries, got: {executed_queries}"
+            assert any("top attractions" in q for q in executed_queries)
+            assert any("best sights" in q or "unmissable" in q for q in executed_queries)
+
+            # 2. Canonical URL deduplication collapsed duplicate Victoria Memorial URL
+            urls = [s["url"] for s in data["sources"]]
+            assert len(urls) == 2, f"Expected 2 unique sources after deduplication, got: {urls}"
+
+            # 3. Both landmarks synthesized with distinct evidence
+            att_names = [a["name"] for a in data["attractions"]]
+            assert any("Victoria Memorial" in n for n in att_names)
+            assert any("Indian Museum" in n for n in att_names)
+
+
+@pytest.mark.asyncio
+async def test_global_research_engine_matrix_mumbai_and_foreign():
+    """
+    Verifies that the shared research architecture works reliably across arbitrary destinations:
+    1. Indian metro (Mumbai): Gateway of India & Marine Drive in-destination, Elephanta Caves excursion, Taj Mahal rejected.
+    2. Foreign destination (Tokyo): Tokyo Skytree & Senso-ji in-destination, Mount Fuji excursion, Colosseum rejected.
+    3. Candidate-specific follow-up query formulation when evidence is weak.
+    """
+    # 1. Mumbai Test
+    mumbai_search_results = [
+        {
+            "title": "Top Places to Visit in Mumbai - Maharashtra Tourism",
+            "url": "https://mumbaitourism.gov.in/places",
+            "snippet": "Discover top sights in South Mumbai including the Gateway of India and Marine Drive promenade."
+        },
+        {
+            "title": "Gateway of India Overview",
+            "url": "https://mumbaitourism.gov.in/gateway",
+            "snippet": "20th century arch monument overlooking the Arabian Sea at Apollo Bunder in South Mumbai."
+        },
+        {
+            "title": "Elephanta Caves Day Trip Guide",
+            "url": "https://mumbaitourism.gov.in/elephanta",
+            "snippet": "Ancient rock-cut temples located on an island 10 km east of Mumbai accessible by ferry."
+        },
+        {
+            "title": "Taj Mahal Monument of Love",
+            "url": "https://uptourism.gov.in/taj-mahal",
+            "snippet": "Ivory-white marble mausoleum situated in Agra, Uttar Pradesh."
+        }
+    ]
+
+    mumbai_fetch_results = [
+        {
+            "url": "https://mumbaitourism.gov.in/places",
+            "text": """# Top Places in Mumbai
+## Gateway of India
+The Gateway of India is an iconic 20th-century arch monument erected to commemorate the landing of King George V at Apollo Bunder in Mumbai.
+
+## Marine Drive
+Marine Drive is a 3.6-kilometre-long boulevard along the Arabian Sea coast of South Mumbai.
+
+## Elephanta Caves
+A UNESCO World Heritage site situated on Elephanta Island 10 km east of Mumbai.
+
+## Taj Mahal
+A world wonder situated in Agra, Uttar Pradesh.
+"""
+        }
+    ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key"):
+
+        mock_search.return_value = mumbai_search_results
+        mock_fetch.return_value = mumbai_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "Mumbai, Maharashtra",
+                    "duration_days": 4,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Couple",
+                    "prompt": "Plan a 4-day trip to Mumbai under $500",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            attractions = data["attractions"]
+            att_names = [a["name"] for a in attractions]
+
+            # In-destination verification
+            gateway = next((a for a in attractions if "Gateway of India" in a["name"]), None)
+            assert gateway is not None, f"Expected Gateway of India in attractions: {att_names}"
+            assert gateway["geographic_status"] == "in_destination"
+
+            marine_drive = next((a for a in attractions if "Marine Drive" in a["name"]), None)
+            assert marine_drive is not None, f"Expected Marine Drive in attractions: {att_names}"
+            assert marine_drive["geographic_status"] == "in_destination"
+
+            # Excursion verification
+            elephanta = next((a for a in attractions if "Elephanta" in a["name"]), None)
+            assert elephanta is not None, f"Expected Elephanta Caves in attractions: {att_names}"
+            assert elephanta["geographic_status"] == "nearby_excursion"
+
+            # Geographic mismatch rejection: Taj Mahal in Agra MUST be rejected for Mumbai
+            assert not any("Taj Mahal" in n for n in att_names), "Taj Mahal must be rejected for Mumbai"
+
+    # 2. Foreign Destination Test (Tokyo)
+    tokyo_search_results = [
+        {
+            "title": "Tokyo Official Travel Guide - Must-See Sights",
+            "url": "https://gotokyo.org/en/guide",
+            "snippet": "Explore Tokyo's top cultural sights and modern wonders across Asakusa and Sumida."
+        }
+    ]
+
+    tokyo_fetch_results = [
+        {
+            "url": "https://gotokyo.org/en/guide",
+            "text": """# Best Attractions in Tokyo
+## Senso-ji Temple
+Senso-ji is Tokyo's oldest ancient Buddhist temple located in Asakusa.
+
+## Tokyo Skytree
+Tokyo Skytree is a broadcasting and observation tower in Sumida, Tokyo.
+
+## Mount Fuji Excursion
+Mount Fuji is an iconic active volcano located 100 km southwest of Tokyo, visited as a full-day tour.
+
+## Colosseum
+The ancient Roman amphitheatre located in Rome, Italy.
+"""
+        }
+    ]
+
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search_tokyo, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch_tokyo, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key"):
+
+        mock_search_tokyo.return_value = tokyo_search_results
+        mock_fetch_tokyo.return_value = tokyo_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "Tokyo, Japan",
+                    "duration_days": 5,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Couple",
+                    "prompt": "Plan a 5-day trip to Tokyo",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            attractions = data["attractions"]
+            att_names = [a["name"] for a in attractions]
+
+            # In-destination verification for foreign destination
+            sensoji = next((a for a in attractions if "Senso" in a["name"]), None)
+            assert sensoji is not None, f"Expected Senso-ji in Tokyo attractions: {att_names}"
+            assert sensoji["geographic_status"] == "in_destination"
+
+            skytree = next((a for a in attractions if "Skytree" in a["name"]), None)
+            assert skytree is not None, f"Expected Tokyo Skytree in attractions: {att_names}"
+            assert skytree["geographic_status"] == "in_destination"
+
+            # Excursion verification
+            fuji = next((a for a in attractions if "Fuji" in a["name"]), None)
+            assert fuji is not None, f"Expected Mount Fuji in attractions: {att_names}"
+            assert fuji["geographic_status"] == "nearby_excursion"
+
+            # Geographic mismatch rejection: Colosseum in Rome MUST be rejected for Tokyo
+            assert not any("Colosseum" in n for n in att_names), "Colosseum must be rejected for Tokyo"
+
+
+@pytest.mark.asyncio
+async def test_mumbai_root_token_and_geographic_verification():
+    """
+    Regression test verifying:
+    1. 'Mumbai' root-token bug fix: 'Mumbai and the hills there' matches the canonical municipality 'Mumbai'.
+    2. 'Plan 5 days in Mumbai under $900' handles budget and destination cleanly.
+    3. Legitimate Mumbai landmarks (Gateway of India, Elephanta Caves, Chhatrapati Shivaji Maharaj Terminus)
+       are verified and NEVER rejected as geographic mismatches.
+    4. Out-of-destination landmark (Taj Mahal in Agra) is strictly rejected as a mismatch for Mumbai.
+    5. Generic destinations not in predefined tables (e.g. Reykjavik) preserve local landmarks while
+       still rejecting known foreign landmarks (e.g. Taj Mahal).
+    6. Full research flow with mocked TinyFish retrieves and verifies legitimate Mumbai landmarks.
+    """
+    from backend.services.research_agent import (
+        is_geographic_mismatch,
+        classify_attraction_geography,
+        sanitize_destination_name,
+    )
+
+    # 1. Prompt destination sanitization checks
+    assert sanitize_destination_name("Mumbai") == "Mumbai"
+    assert sanitize_destination_name("Mumbai and the hills there") == "Mumbai"
+    assert sanitize_destination_name("Mumbai and surrounding hills") == "Mumbai"
+    assert sanitize_destination_name("Plan 5 days in Mumbai under $900") == "Plan 5 days in Mumbai under $900"
+
+    # 2. Geographic mismatch checks across variations
+    for dest in ["Mumbai", "Mumbai and the hills there", "Mumbai and surrounding hills"]:
+        # Legitimate landmarks must NOT be rejected
+        assert not is_geographic_mismatch("Gateway of India", "Historic arch monument in Colaba, Mumbai.", dest), f"Gateway of India must not be rejected for {dest}"
+        assert not is_geographic_mismatch("Elephanta Caves", "Ancient rock-cut temples on Elephanta Island.", dest), f"Elephanta Caves must not be rejected for {dest}"
+        assert not is_geographic_mismatch("Chhatrapati Shivaji Maharaj Terminus", "Historic railway terminal in Mumbai.", dest), f"CST must not be rejected for {dest}"
+        assert not is_geographic_mismatch("Marine Drive", "Arc road along the coast in Mumbai.", dest), f"Marine Drive must not be rejected for {dest}"
+
+        # Genuinely out-of-destination landmarks MUST be rejected
+        assert is_geographic_mismatch("Taj Mahal", "Mausoleum located in Agra, Uttar Pradesh.", dest), f"Taj Mahal must be rejected for {dest}"
+        assert is_geographic_mismatch("Colosseum", "Ancient amphitheatre located in Rome, Italy.", dest), f"Colosseum must be rejected for {dest}"
+
+    # 3. Generic destination not in predefined tables (e.g. Reykjavik, Iceland)
+    generic_dest = "Reykjavik, Iceland"
+    # Local landmark not in known foreign table must NOT be rejected
+    assert not is_geographic_mismatch("Hallgrimskirkja", "Iconic Lutheran church in Reykjavik.", generic_dest), "Hallgrimskirkja must not be rejected for Reykjavik"
+    # Foreign landmark with known authoritative location MUST be rejected
+    assert is_geographic_mismatch("Taj Mahal", "Located in Agra.", generic_dest), "Taj Mahal must be rejected for Reykjavik"
+    assert is_geographic_mismatch("Eiffel Tower", "Located in Paris, France.", generic_dest), "Eiffel Tower must be rejected for Reykjavik"
+
+    # 4. Classification statuses for Mumbai
+    status, label, _ = classify_attraction_geography("Gateway of India", "Historic waterfront arch in Colaba, Mumbai.", "", "Mumbai and the hills there")
+    assert status == "in_destination", f"Gateway of India should be in_destination, got {status}"
+
+    status, label, _ = classify_attraction_geography("Elephanta Caves", "Island cave temples 10 km from Mumbai.", "", "Mumbai and the hills there")
+    assert status == "nearby_excursion", f"Elephanta Caves should be nearby_excursion, got {status}"
+
+    # 5. Full research workflow with mocked TinyFish for 'Mumbai and the hills there'
+    mumbai_search_results = [
+        {
+            "title": "Top Attractions in Mumbai - Gateway of India & Marine Drive",
+            "url": "https://mumbaitourism.gov.in/highlights",
+            "snippet": "Gateway of India and Marine Drive offer classic Arabian Sea views in South Mumbai. Chhatrapati Shivaji Maharaj Terminus is a UNESCO heritage railway terminal."
+        },
+        {
+            "title": "Elephanta Caves Excursion from Mumbai Ferry",
+            "url": "https://mumbaitourism.gov.in/elephanta-ferry",
+            "snippet": "Elephanta Caves is an island day trip located 10 km east of Mumbai accessible by ferry from Gateway of India."
+        },
+        {
+            "title": "India Golden Triangle Tour with Taj Mahal",
+            "url": "https://indiatours.org/golden-triangle",
+            "snippet": "Visit the Taj Mahal in Agra, Uttar Pradesh on this north India route."
+        }
+    ]
+
+    mumbai_fetch_results = [
+        {
+            "url": "https://mumbaitourism.gov.in/highlights",
+            "text": """
+# Iconic Mumbai Attractions
+
+## Gateway of India
+The Gateway of India is an arch monument erected by the British Raj overlooking Mumbai Harbour in Colaba.
+
+## Chhatrapati Shivaji Maharaj Terminus
+Chhatrapati Shivaji Maharaj Terminus is a historic railway station and UNESCO World Heritage Site in Mumbai.
+
+## Marine Drive
+A 3.6-kilometre-long boulevard along the coast of South Mumbai.
+"""
+        }
+    ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key"):
+
+        mock_search.return_value = mumbai_search_results
+        mock_fetch.return_value = mumbai_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "Mumbai and the hills there",
+                    "duration_days": 5,
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Couple",
+                    "prompt": "Plan 5 days in Mumbai and the hills there under $900",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            attractions = data["attractions"]
+            att_names = [a["name"] for a in attractions]
+
+            # Gateway of India must be verified in_destination
+            gateway = next((a for a in attractions if "Gateway" in a["name"]), None)
+            assert gateway is not None, f"Expected Gateway of India in attractions: {att_names}"
+            assert gateway["geographic_status"] == "in_destination"
+
+            # CST must be verified in_destination
+            cst = next((a for a in attractions if "Terminus" in a["name"] or "Chhatrapati" in a["name"]), None)
+            assert cst is not None, f"Expected Chhatrapati Shivaji Maharaj Terminus in attractions: {att_names}"
+            assert cst["geographic_status"] == "in_destination"
+
+            # Elephanta Caves must be retained as nearby excursion
+            elephanta = next((a for a in attractions if "Elephanta" in a["name"]), None)
+            assert elephanta is not None, f"Expected Elephanta Caves in attractions: {att_names}"
+            assert elephanta["geographic_status"] == "nearby_excursion"
+
+            # Out of destination landmark (Taj Mahal) must be rejected
+            assert not any("Taj Mahal" in n for n in att_names), "Taj Mahal must be rejected for Mumbai and the hills there"
+
+
+@pytest.mark.asyncio
+async def test_chennai_duration_srikalahasti_and_evidence_integrity():
+    """
+    Regression Test for Chennai post-fix quality audit:
+    1. Duration integrity: 'Plan 5 days in Chennai under $900' produces exactly 5 days.
+    2. 'Plan 6 days in Chennai under $900' produces exactly 6 days.
+    3. Srikalahasti Temple is classified as 'nearby_excursion', NEVER 'in_destination'.
+    4. Srikalahasti location_note contains distance/travel time disclosure (~115 km, 2.5-3 hours).
+    5. Mixed listicle sentence mentioning Valluvar Kottam and Rajiv Gandhi Memorial
+       is rejected from being bound as single-attraction evidence for Lord Ramanujar Temple.
+    6. Chennai landmarks (Marina Beach, Kapaleeshwarar Temple) are classified as in_destination.
+    """
+    from backend.services.research_agent import classify_attraction_geography, _is_multi_attraction_list_text
+
+    # Check 1 & 2: TripBrief duration synchronization
+    brief_5 = TripBrief(
+        destination="Chennai",
+        duration_days=6,  # Stale duration in state
+        prompt="Plan 5 days in Chennai under $900"
+    )
+    assert brief_5.duration_days == 5, f"Expected duration_days=5, got {brief_5.duration_days}"
+
+    brief_6 = TripBrief(
+        destination="Chennai",
+        duration_days=5,  # Stale duration in state
+        prompt="Plan 6 days in Chennai under $900"
+    )
+    assert brief_6.duration_days == 6, f"Expected duration_days=6, got {brief_6.duration_days}"
+
+    # Check 3 & 4: Srikalahasti Temple geographic classification
+    geo_status, geo_label, geo_note = classify_attraction_geography(
+        "Srikalahasti Temple",
+        "Ancient Shiva temple known for its Vayu linga located in Srikalahasti.",
+        "",
+        "Chennai"
+    )
+    assert geo_status == "nearby_excursion", f"Srikalahasti must be 'nearby_excursion', got {geo_status}"
+    assert "115 km" in geo_note, f"Expected distance in location note: {geo_note}"
+    assert "Andhra Pradesh" in geo_note, f"Expected state in location note: {geo_note}"
+
+    # Check 5: Multi-attraction list text rejection
+    mixed_sentence = "You can visit Lord Ramanujar Temple, Valluvar Kottam and the Great Rajiv Gandhi Memorial on this tour."
+    assert _is_multi_attraction_list_text(mixed_sentence, "Chennai", current_landmark="Lord Ramanujar Temple") is True, \
+        "Sentence mentioning Valluvar Kottam and Rajiv Gandhi Memorial must be detected as multi-attraction list text"
+
+    # Clean sentence about Lord Ramanujar Temple alone is NOT rejected
+    clean_sentence = "Lord Ramanujar Temple is an ancient temple with rich heritage and dedicated shrine."
+    assert _is_multi_attraction_list_text(clean_sentence, "Chennai", current_landmark="Lord Ramanujar Temple") is False
+
+    # Check 6: Core Chennai landmark classification
+    geo_marina_status, _, _ = classify_attraction_geography(
+        "Marina Beach",
+        "Natural urban beach along the Bay of Bengal in Chennai.",
+        "",
+        "Chennai"
+    )
+    assert geo_marina_status == "in_destination", f"Marina Beach must be 'in_destination', got {geo_marina_status}"
+
+    geo_kapaleeshwarar_status, _, _ = classify_attraction_geography(
+        "Kapaleeshwarar Temple",
+        "7th-century temple of Shiva located in Mylapore, Chennai.",
+        "",
+        "Chennai"
+    )
+    assert geo_kapaleeshwarar_status == "in_destination", f"Kapaleeshwarar Temple must be 'in_destination', got {geo_kapaleeshwarar_status}"
+
+    # End-to-end research flow with mocked search/fetch
+    chennai_search_results = [
+        {
+            "title": "Chennai Tourist Places - Top Sights and Excursions",
+            "url": "https://tamilnadutourism.tn.gov.in/chennai",
+            "snippet": "Discover Marina Beach, Kapaleeshwarar Temple, and day trips like Srikalahasti Temple from Chennai."
+        }
+    ]
+    chennai_fetch_results = [
+        {
+            "url": "https://tamilnadutourism.tn.gov.in/chennai",
+            "text": """# Chennai Travel Guide
+
+## Marina Beach
+Marina Beach is a natural urban beach in Chennai along the Bay of Bengal.
+
+## Kapaleeshwarar Temple
+Kapaleeshwarar Temple is a temple of Shiva located in Mylapore, Chennai.
+
+## Srikalahasti Temple
+Srikalahasti Temple is a renowned pilgrimage center located in Andhra Pradesh, around 115 km from Chennai.
+
+## Lord Ramanujar Temple
+Lord Ramanujar Temple, Valluvar Kottam and the Great Rajiv Gandhi Memorial are popular cultural sites.
+"""
+        }
+    ]
+
+    transport = ASGITransport(app=app)
+    with patch("backend.services.tinyfish.TinyFishClient.search", new_callable=AsyncMock) as mock_search, \
+         patch("backend.services.tinyfish.TinyFishClient.fetch", new_callable=AsyncMock) as mock_fetch, \
+         patch("backend.config.TINYFISH_API_KEY", "mock-tinyfish-key"):
+
+        mock_search.return_value = chennai_search_results
+        mock_fetch.return_value = chennai_fetch_results
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            payload = {
+                "trip_brief": {
+                    "destination": "Chennai",
+                    "duration_days": 6,  # Stale duration in brief; must sync to 5 from prompt
+                    "budget_tier": "Balanced Explorer",
+                    "group_size": "Couple",
+                    "prompt": "Plan 5 days in Chennai under $900",
+                    "mode": "quick"
+                },
+                "selected_categories": ["attractions"],
+                "confirmed": True
+            }
+            res = await ac.post("/api/trips/research", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            assert data["duration_days"] == 5, f"Expected duration_days=5, got {data['duration_days']}"
+            attractions = data["attractions"]
+            att_names = [a["name"] for a in attractions]
+
+            # Marina Beach or Kapaleeshwarar verified in_destination
+            mb = next((a for a in attractions if "Marina Beach" in a["name"]), None)
+            if mb:
+                assert mb["geographic_status"] == "in_destination"
+
+            # Srikalahasti Temple must NOT be in_destination
+            sk = next((a for a in attractions if "Srikalahasti" in a["name"]), None)
+            if sk:
+                assert sk["geographic_status"] == "nearby_excursion", f"Srikalahasti must be nearby_excursion, got {sk['geographic_status']}"
+
+            # Lord Ramanujar Temple must NOT inherit mixed excerpt mentioning Valluvar Kottam
+            lr = next((a for a in attractions if "Ramanujar" in a["name"]), None)
+            if lr:
+                desc = lr.get("description", "")
+                assert "Valluvar Kottam" not in desc, f"Mixed excerpt must not leak into description: {desc}"
+
+
+
+
+
+
+
 
 
 

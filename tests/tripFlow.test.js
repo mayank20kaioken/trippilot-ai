@@ -6,7 +6,10 @@ import {
   deduplicateSources,
   deduplicateAndCleanAttractions,
   classifyAttractionGeography,
-  isPlausibleNamedPlace
+  isGeographicMismatch,
+  isPlausibleNamedPlace,
+  isMultiAttractionListText,
+  getAttractionProximityKey
 } from '../src/utils/tripBuilder.js';
 
 console.log('🧪 Starting TripPilot AI Destination Fidelity & Results Quality Verification...\n');
@@ -1100,6 +1103,941 @@ for (const stay of ladakhTripData.accommodations) {
   assert.ok(stay.pricePerNightUsd > 0);
 }
 console.log('✅ Check 20: Category heading rejection, Himalayan landmark grounding & itinerary integrity verified');
+
+// 21. Regression Check #21: "Plan a next 5 days trip to Maldives under $450" Temporal Word Isolation
+// 21a. Primary reproduction prompt
+const maldivesPrompt = "Plan a next 5 days trip to Maldives under $450";
+const parsedMaldives = parseTripPrompt(maldivesPrompt);
+assert.equal(parsedMaldives.originalPrompt, maldivesPrompt);
+assert.equal(parsedMaldives.destination, "Maldives", "Destination must be 'Maldives', NOT 'Next Maldives'");
+assert.equal(parsedMaldives.durationDays, 5, "Duration must be 5 days");
+assert.equal(parsedMaldives.budgetTarget, 450, "Budget target must be 450");
+assert.equal(parsedMaldives.budgetCurrency, "USD", "Budget currency must be USD");
+assert.equal(parsedMaldives.needsClarification, false);
+
+// 21b. Temporal variations: "next weekend", "next 5 days", "upcoming", "this coming week"
+const promptVariations = [
+  {
+    prompt: "Plan a trip to Maldives next weekend under $300",
+    expectedDest: "Maldives",
+    expectedDays: 3,
+    expectedBudget: 300
+  },
+  {
+    prompt: "next 5 days in Paris",
+    expectedDest: "Paris",
+    expectedDays: 5,
+    expectedBudget: null
+  },
+  {
+    prompt: "upcoming 4-day trip to Tokyo",
+    expectedDest: "Tokyo",
+    expectedDays: 4,
+    expectedBudget: null
+  },
+  {
+    prompt: "Plan our next week trip to Rome",
+    expectedDest: "Rome",
+    expectedDays: 7,
+    expectedBudget: null
+  },
+  {
+    prompt: "this weekend in Goa under ₹10,000",
+    expectedDest: "Goa",
+    expectedDays: 3,
+    expectedBudget: 10000
+  }
+];
+
+for (const tc of promptVariations) {
+  const res = parseTripPrompt(tc.prompt);
+  assert.equal(
+    res.destination,
+    tc.expectedDest,
+    `Destination for prompt '${tc.prompt}' must be '${tc.expectedDest}', got '${res.destination}'`
+  );
+  assert.equal(
+    res.durationDays,
+    tc.expectedDays,
+    `Duration for prompt '${tc.prompt}' must be ${tc.expectedDays}, got ${res.durationDays}`
+  );
+  if (tc.expectedBudget !== null) {
+    assert.equal(res.budgetTarget, tc.expectedBudget);
+  }
+}
+
+// 21c. Ordinary destination names (including real prefixes like "New", "South", "North", "West") must NOT be truncated
+const ordinaryDestinations = [
+  "New York",
+  "New Delhi",
+  "South Korea",
+  "North Goa",
+  "West Bengal",
+  "Maldives",
+  "Sri Lanka",
+  "Costa Rica",
+  "Hong Kong"
+];
+for (const dest of ordinaryDestinations) {
+  const norm = normalizeDestination(dest);
+  assert.equal(norm, dest, `Ordinary destination '${dest}' must be preserved as '${dest}', got '${norm}'`);
+  const parsed = parseTripPrompt(`Plan a 5-day trip to ${dest}`);
+  assert.equal(parsed.destination, dest, `Parsed destination for '${dest}' must be '${dest}', got '${parsed.destination}'`);
+}
+
+// 21d. Full trip synthesis for Maldives trip brief
+const maldivesTripData = buildActiveTripData({
+  tripBrief: parsedMaldives,
+  liveResearchResult: {
+    status: "completed",
+    destination: "Maldives",
+    duration_days: 5,
+    attractions: [
+      {
+        id: "att-m1",
+        name: "Male Grand Friday Mosque",
+        description: "Historic coral-stone mosque located in Male, Maldives.",
+        source_url: "https://visitmaldives.com/sightseeing",
+        source_title: "Visit Maldives Official Sightseeing",
+        is_live_result: true
+      }
+    ],
+    sources: [
+      {
+        id: "src-m1",
+        title: "Visit Maldives Official",
+        url: "https://visitmaldives.com/sightseeing",
+        domain: "visitmaldives.com",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+assert.equal(maldivesTripData.meta.destination, "Maldives", "Synthesized destination must be 'Maldives'");
+assert.ok(!JSON.stringify(maldivesTripData).includes("Next Maldives"), "Synthesized trip data must NEVER include 'Next Maldives'");
+assert.equal(maldivesTripData.days.length, 5);
+assert.ok(maldivesTripData.days[0].area.includes("Maldives"));
+for (let i = 1; i < 5; i++) {
+  assert.ok(
+    maldivesTripData.days[i].area.includes("Maldives"),
+    `Day ${i + 1} area must reference Maldives`
+  );
+  assert.ok(
+    maldivesTripData.days[i].theme.includes("Flexible Exploration Day"),
+    `Day ${i + 1} theme must be a Flexible Exploration Day`
+  );
+}
+console.log('✅ Check 21: Maldives prompt & temporal word isolation verified ("Plan a next 5 days trip to Maldives under $450" -> Maldives, 5 days, $450 USD)');
+
+// 22. Regression Check #22: West Bengal Geographic Relevance, Foreign Landmark Rejection & Evidence Quality
+// 22a. Prompt parsing: "Plan a 4 days trip to the West Bengal under $560"
+const wbPrompt = "Plan a 4 days trip to the West Bengal under $560";
+const parsedWB = parseTripPrompt(wbPrompt);
+assert.equal(parsedWB.destination, "West Bengal", "Destination must be 'West Bengal'");
+assert.equal(parsedWB.durationDays, 4, "Duration must be 4 days");
+assert.equal(parsedWB.budgetTarget, 560, "Budget target must be 560");
+assert.equal(parsedWB.budgetCurrency, "USD", "Budget currency must be USD");
+assert.equal(parsedWB.needsClarification, false);
+
+// 22b. Deduplication & Rejection of foreign mismatched landmarks (Taj Mahal in Agra, Amber Fort in Jaipur)
+const mixedRawAttractions = [
+  {
+    name: "Taj Mahal",
+    description: "The Taj Mahal is an ivory-white marble mausoleum on the south bank of the Yamuna river in Agra, Uttar Pradesh.",
+    source_url: "https://travelguide.com/india/top-monuments",
+    source_title: "Top 10 Monuments in India",
+    is_live_result: true
+  },
+  {
+    name: "Victoria Memorial",
+    description: "The Victoria Memorial is a large marble building in Kolkata, West Bengal, dedicated to Queen Victoria.",
+    source_url: "https://travelguide.com/india/top-monuments",
+    source_title: "Top 10 Monuments in India",
+    is_live_result: true
+  },
+  {
+    name: "Amber Fort",
+    description: "Amer Fort is a fort located in Amer, Jaipur, Rajasthan, known for its artistic style elements.",
+    source_url: "https://travelguide.com/india/top-monuments",
+    source_title: "Top 10 Monuments in India",
+    is_live_result: true
+  },
+  {
+    name: "Howrah Bridge",
+    description: "Howrah Bridge spans the Hooghly River linking the twin cities of Kolkata and Howrah in West Bengal.",
+    source_url: "https://westbengaltourism.gov.in/attractions",
+    source_title: "West Bengal Tourism Official",
+    is_live_result: true
+  },
+  {
+    name: "Victoria Memorial, Kolkata",
+    description: "Another entry for Victoria Memorial in central Kolkata.",
+    source_url: "https://kolkatatourism.org/victoria-memorial",
+    source_title: "Kolkata Tourism",
+    is_live_result: true
+  },
+  {
+    name: "Ancient Riverside Pavilion",
+    description: "An unverified scenic riverside spot mentioned in passing without municipal location.",
+    source_url: "https://travelguide.com/bengal/rivers",
+    source_title: "Bengal Rivers",
+    is_live_result: true
+  }
+];
+
+const cleanedWBAttractions = deduplicateAndCleanAttractions(mixedRawAttractions, "West Bengal");
+
+// 1. Taj Mahal must be strictly rejected
+assert.ok(!cleanedWBAttractions.some(a => a.name.toLowerCase().includes("taj mahal")), "Taj Mahal in Agra MUST be rejected for West Bengal");
+
+// 2. Amber Fort must be strictly rejected
+assert.ok(!cleanedWBAttractions.some(a => a.name.toLowerCase().includes("amber fort")), "Amber Fort in Jaipur MUST be rejected for West Bengal");
+
+// 3. Victoria Memorial must be accepted and deduplicated (only 1 Victoria Memorial card)
+const vmCards = cleanedWBAttractions.filter(a => a.name.toLowerCase().includes("victoria memorial"));
+assert.equal(vmCards.length, 1, "Victoria Memorial must be deduplicated to exactly 1 card");
+assert.equal(vmCards[0].geographic_status, "in_destination", "Victoria Memorial must be verified as in_destination");
+
+// 4. Howrah Bridge must be accepted as in_destination
+const howrahCards = cleanedWBAttractions.filter(a => a.name.toLowerCase().includes("howrah bridge"));
+assert.equal(howrahCards.length, 1, "Howrah Bridge must be accepted");
+assert.equal(howrahCards[0].geographic_status, "in_destination", "Howrah Bridge must be verified as in_destination");
+
+// 5. Ancient Riverside Pavilion without clear municipal evidence must remain unverified_location
+const unverifiedSights = cleanedWBAttractions.filter(a => a.name.includes("Ancient Riverside Pavilion"));
+assert.equal(unverifiedSights.length, 1);
+assert.equal(unverifiedSights[0].geographic_status, "unverified_location", "Ambiguous sight must remain unverified_location");
+
+// 22c. Full trip synthesis check for West Bengal
+const wbTripData = buildActiveTripData({
+  tripBrief: parsedWB,
+  liveResearchResult: {
+    status: "completed",
+    destination: "West Bengal",
+    duration_days: 4,
+    attractions: cleanedWBAttractions,
+    sources: [
+      {
+        id: "src-wb1",
+        title: "West Bengal Tourism Official",
+        url: "https://westbengaltourism.gov.in/attractions",
+        domain: "westbengaltourism.gov.in",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+assert.equal(wbTripData.meta.destination, "West Bengal");
+assert.equal(wbTripData.days.length, 4);
+
+// Only verified in-destination attractions are scheduled as confirmed stops
+const day1Morning = wbTripData.days[0].slots.morning;
+assert.ok(
+  day1Morning.title.includes("Victoria Memorial") || day1Morning.title.includes("Howrah Bridge"),
+  "Day 1 confirmed stop must be a verified West Bengal sight"
+);
+
+// Unverified sights must NEVER be scheduled into confirmed itinerary stops
+const allScheduledTitles = wbTripData.days.flatMap(d => [d.slots.morning.title, d.slots.afternoon.title]);
+assert.ok(!allScheduledTitles.some(t => t.includes("Ancient Riverside Pavilion")), "Unverified sights must NEVER be scheduled as confirmed stops");
+assert.ok(!allScheduledTitles.some(t => t.includes("Taj Mahal")), "Taj Mahal must NEVER appear in West Bengal itinerary");
+
+// Days without enough confirmed stops remain flexible exploration days
+assert.ok(wbTripData.days[2].theme.includes("Flexible Exploration Day") || wbTripData.days[3].theme.includes("Flexible Exploration Day"));
+
+// Accommodations and budget benchmarks remain positive and clearly disclosed
+assert.equal(wbTripData.accommodations.length, 3);
+for (const acc of wbTripData.accommodations) {
+  assert.ok(acc.pricePerNightUsd > 0, "Stay nightly price must be positive");
+  assert.ok(acc.isArchetype === true, "Stay must be an illustrative archetype");
+}
+assert.ok(wbTripData.budgetBreakdown.totalUsd > 0);
+assert.ok(wbTripData.budgetBreakdown.categories.every(c => c.amount > 0));
+
+console.log('✅ Check 22: West Bengal geographic relevance, Taj Mahal rejection, sub-region grounding & itinerary integrity verified');
+
+// ==========================================
+// Check 23: Attraction Evidence Integrity Audit & Deduplication
+// ==========================================
+// 1. Multi-attraction list detection
+assert.equal(
+  isMultiAttractionListText("Must-see sights include Victoria Memorial, Indian Museum, and Howrah Bridge.", "West Bengal"),
+  true,
+  "Multi-attraction list enumeration must be detected as a listicle sentence"
+);
+assert.equal(
+  isMultiAttractionListText("The Victoria Memorial is a grand marble building in central Kolkata.", "West Bengal"),
+  false,
+  "Individual landmark description must not be flagged as a multi-attraction list"
+);
+
+// 2. Distinct evidence binding from listicle and evidence upgrade
+const mockRawAuditAttractions = [
+  {
+    id: "att-audit-fb",
+    name: "Victoria Memorial",
+    description: "Must-see places include Victoria Memorial, Indian Museum, Howrah Bridge, and Science City. Follow us!",
+    source_url: "https://www.facebook.com/kolkatatourism/posts/101202",
+    source_title: "Top Places in Kolkata on Facebook",
+    is_live_result: true,
+    location_note: "Sourced from social media [facebook.com] — lower confidence citation"
+  },
+  {
+    id: "att-audit-listicle",
+    name: "Top Sights & Heritage Guide to Kolkata",
+    description: "The Victoria Memorial is a grand marble building in central Kolkata. The Indian Museum founded in 1814 is the oldest and largest museum in India.",
+    source_url: "https://kolkatatourism.gov.in/heritage-guide",
+    source_title: "Top Sights & Heritage Guide to Kolkata - West Bengal Tourism",
+    is_live_result: true
+  },
+  {
+    id: "att-audit-foreign",
+    name: "Taj Mahal",
+    description: "The Taj Mahal is an ivory-white marble mausoleum on the south bank of the Yamuna in Agra.",
+    source_url: "https://kolkatatourism.gov.in/heritage-guide",
+    source_title: "Top Sights & Heritage Guide to Kolkata - West Bengal Tourism",
+    is_live_result: true
+  }
+];
+
+const cleanedAuditAttractions = deduplicateAndCleanAttractions(mockRawAuditAttractions, "West Bengal");
+
+// Taj Mahal must be rejected
+assert.ok(!cleanedAuditAttractions.some(a => a.name.includes("Taj Mahal")), "Taj Mahal must be rejected for West Bengal");
+
+// Victoria Memorial and Indian Museum must both be present
+const auditVM = cleanedAuditAttractions.find(a => a.name.includes("Victoria Memorial"));
+const auditIM = cleanedAuditAttractions.find(a => a.name.includes("Indian Museum"));
+assert.ok(auditVM, "Victoria Memorial must be extracted");
+assert.ok(auditIM, "Indian Museum must be extracted");
+
+// Check distinct descriptions (no shared generic snippet)
+assert.notEqual(auditVM.description, auditIM.description, "Victoria Memorial and Indian Museum must NOT share identical description");
+assert.ok(auditVM.description.toLowerCase().includes("marble building"), "Victoria Memorial must have its own marble building description");
+assert.ok(auditIM.description.toLowerCase().includes("oldest and largest"), "Indian Museum must have its own museum description");
+
+// Neither description should inherit the generic multi-attraction list intro
+assert.ok(!auditVM.description.startsWith("Must-see places include"));
+assert.ok(!auditIM.description.startsWith("Must-see places include"));
+
+// Evidence Upgrade check: Victoria Memorial was initially from Facebook but upgraded to the gov guide
+assert.equal(auditVM.source_url, "https://kolkatatourism.gov.in/heritage-guide", "Weak social source must be upgraded to authoritative gov guide");
+assert.equal(auditVM.evidence_quality, "verified_grounded", "Upgraded attraction must be marked verified_grounded");
+assert.equal(auditVM.verification_warning, null, "Grounded attraction must have null verification_warning");
+
+console.log('✅ Check 23: Attraction evidence integrity audit, distinct evidence binding, multi-attraction list rejection & evidence upgrade verified');
+
+// ==========================================
+// Check 24: Research Architecture Stabilisation
+// - 6-day itinerary meaningful scheduling & honest research gap disclosure
+// - Verified geographic proximity clustering
+// - Strictly illustrative stay & budget estimates labeling
+// ==========================================
+// 1. Proximity clustering check (2-day trip with 3 sights)
+const proximity2DayTrip = buildActiveTripData({
+  tripBrief: {
+    destination: "Kolkata",
+    durationDays: 2,
+    groupType: "Couple",
+    travelStyle: "Balanced Explorer"
+  },
+  liveResearchResult: {
+    status: "completed",
+    destination: "Kolkata",
+    duration_days: 2,
+    attractions: [
+      {
+        id: "att-p1",
+        name: "Victoria Memorial",
+        description: "Grand marble monument in central Maidan.",
+        source_url: "https://kolkatatourism.gov.in/vm",
+        source_title: "Victoria Memorial",
+        is_live_result: true,
+        geographic_status: "in_destination"
+      },
+      {
+        id: "att-p2",
+        name: "Howrah Bridge",
+        description: "Iconic cantilever bridge over the Hooghly river.",
+        source_url: "https://kolkatatourism.gov.in/hb",
+        source_title: "Howrah Bridge",
+        is_live_result: true,
+        geographic_status: "in_destination"
+      },
+      {
+        id: "att-p3",
+        name: "Indian Museum",
+        description: "Oldest museum in Asia located near central Maidan.",
+        source_url: "https://kolkatatourism.gov.in/im",
+        source_title: "Indian Museum",
+        is_live_result: true,
+        geographic_status: "in_destination"
+      }
+    ],
+    sources: [
+      {
+        id: "src-p1",
+        title: "Kolkata Tourism Guide",
+        url: "https://kolkatatourism.gov.in/guide",
+        domain: "kolkatatourism.gov.in",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+// Victoria Memorial and Indian Museum share central_maidan cluster and should be paired on Day 1
+assert.equal(proximity2DayTrip.days.length, 2);
+const proxDay1Morning = proximity2DayTrip.days[0].slots.morning.title;
+const proxDay1Afternoon = proximity2DayTrip.days[0].slots.afternoon.title;
+assert.ok(
+  (proxDay1Morning.includes("Victoria Memorial") && proxDay1Afternoon.includes("Indian Museum")) ||
+  (proxDay1Morning.includes("Indian Museum") && proxDay1Afternoon.includes("Victoria Memorial")),
+  "Geographically proximate sights (Victoria Memorial & Indian Museum) must be clustered on the same day"
+);
+assert.ok(
+  proximity2DayTrip.days[1].slots.morning.title.includes("Howrah Bridge"),
+  "Howrah Bridge should be scheduled on Day 2"
+);
+
+// 2. 6-day trip with 3 verified sights: Days 4, 5, 6 must disclose research gaps without repetitive fake activities
+const sixDayTrip = buildActiveTripData({
+  tripBrief: {
+    destination: "West Bengal",
+    durationDays: 6,
+    groupType: "Couple",
+    travelStyle: "Balanced Explorer"
+  },
+  liveResearchResult: {
+    status: "completed",
+    destination: "West Bengal",
+    duration_days: 6,
+    attractions: [
+      {
+        id: "att-s1",
+        name: "Victoria Memorial",
+        description: "Marble monument in central Kolkata.",
+        source_url: "https://kolkatatourism.gov.in/vm",
+        source_title: "Victoria Memorial",
+        is_live_result: true,
+        geographic_status: "in_destination"
+      },
+      {
+        id: "att-s2",
+        name: "Howrah Bridge",
+        description: "Historic cantilever bridge.",
+        source_url: "https://kolkatatourism.gov.in/hb",
+        source_title: "Howrah Bridge",
+        is_live_result: true,
+        geographic_status: "in_destination"
+      },
+      {
+        id: "att-s3",
+        name: "Indian Museum",
+        description: "Oldest multipurpose museum.",
+        source_url: "https://kolkatatourism.gov.in/im",
+        source_title: "Indian Museum",
+        is_live_result: true,
+        geographic_status: "in_destination"
+      }
+    ],
+    sources: [
+      {
+        id: "src-s1",
+        title: "West Bengal Tourism Guide",
+        url: "https://westbengaltourism.gov.in/guide",
+        domain: "westbengaltourism.gov.in",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+assert.equal(sixDayTrip.days.length, 6, "Itinerary must contain 6 days");
+// Days 1, 2, 3 feature verified sights
+assert.ok(sixDayTrip.days[0].slots.morning.title.includes("Victoria Memorial"));
+assert.ok(sixDayTrip.days[1].slots.morning.title.includes("Howrah Bridge"));
+assert.ok(sixDayTrip.days[2].slots.morning.title.includes("Indian Museum"));
+
+// Days 4, 5, 6 must honestly disclose research gaps rather than repetitive placeholder text
+for (let d = 3; d < 6; d++) {
+  const day = sixDayTrip.days[d];
+  assert.ok(day.theme.includes("Flexible Exploration Day"), `Day ${d + 1} theme must be Flexible Exploration Day`);
+  assert.ok(day.theme.includes("Research Gap Disclosed"), `Day ${d + 1} theme must disclose research gap`);
+  assert.ok(day.slots.morning.title.includes("Research Gap Disclosed"), `Day ${d + 1} morning slot must disclose research gap`);
+  assert.ok(day.slots.morning.description.includes("Live research confirmed 3 distinct sights for this 6-day trip"), `Day ${d + 1} must disclose exact count of verified sights`);
+  assert.ok(day.slots.morning.description.includes(`Day ${d + 1} is left open rather than filled with unverified claims`), `Day ${d + 1} must state it is left open rather than filled with unverified claims`);
+}
+
+// 3. Stays and budget benchmarking labeling
+assert.equal(sixDayTrip.accommodations.length, 3);
+for (const acc of sixDayTrip.accommodations) {
+  assert.equal(acc.isArchetype, true, "Stay must be an illustrative archetype");
+  assert.ok(acc.type.includes("Illustrative Stay Archetype"), "Stay type must state illustrative archetype");
+  assert.ok(acc.sourceBadge.includes("Live Stays Crawl Pending"), "Stay must disclose live stays crawl is pending");
+  assert.ok(acc.pricePerNightUsd > 0, "Price per night must be positive");
+}
+
+console.log('✅ Check 24: Research architecture stabilisation, 6-day research gap disclosure, proximity clustering & illustrative stay labeling verified');
+
+// ------------------------------------------------------------------------------------------------
+// CHECK 25: Global Research Engine Matrix Verification (Mumbai, Foreign Cities, Universal Clustering)
+// ------------------------------------------------------------------------------------------------
+// 1. Mumbai prompt parsing
+const mumbaiParsed = parseTripPrompt("Plan a 4-day trip to Mumbai for two people under $400");
+assert.equal(mumbaiParsed.destination, "Mumbai", "Destination should be cleanly parsed as Mumbai");
+assert.equal(mumbaiParsed.durationDays, 4, "Duration should be 4 days");
+assert.equal(mumbaiParsed.budgetTarget, 400, "Budget target should be $400");
+assert.equal(mumbaiParsed.budgetCurrency, "USD", "Currency should be USD");
+
+// 2. Mumbai geographic classification and foreign mismatch rejection
+const rawMumbaiAttractions = [
+  {
+    id: "att-m1",
+    name: "Gateway of India",
+    description: "Iconic arch monument overlooking the Arabian Sea at Apollo Bunder in Mumbai.",
+    source_url: "https://mumbaitourism.gov.in/gateway",
+    source_title: "Gateway of India - Mumbai Tourism",
+    is_live_result: true
+  },
+  {
+    id: "att-m2",
+    name: "Marine Drive",
+    description: "A 3.6-kilometre-long boulevard along the Arabian Sea coast of South Mumbai.",
+    source_url: "https://mumbaitourism.gov.in/marine-drive",
+    source_title: "Marine Drive Promenade",
+    is_live_result: true
+  },
+  {
+    id: "att-m3",
+    name: "Elephanta Caves",
+    description: "Cave temples dedicated to Shiva located on an island 10 km east of Mumbai accessible by ferry.",
+    source_url: "https://mumbaitourism.gov.in/elephanta",
+    source_title: "Elephanta Caves Island Guide",
+    is_live_result: true
+  },
+  {
+    id: "att-m4",
+    name: "Taj Mahal",
+    description: "Ivory-white marble mausoleum on the right bank of the river Yamuna in Agra, Uttar Pradesh.",
+    source_url: "https://uptourism.gov.in/taj-mahal",
+    source_title: "Taj Mahal in Agra",
+    is_live_result: true
+  }
+];
+
+const cleanedMumbaiAttractions = deduplicateAndCleanAttractions(rawMumbaiAttractions, "Mumbai");
+const cleanedMumbaiNames = cleanedMumbaiAttractions.map(a => a.name);
+
+// Taj Mahal in Agra MUST be rejected as a geographic mismatch for Mumbai
+assert.ok(!cleanedMumbaiNames.includes("Taj Mahal"), "Taj Mahal in Agra must be rejected for Mumbai");
+
+// Gateway of India & Marine Drive must be verified in-destination
+const mumbaiGateway = cleanedMumbaiAttractions.find(a => a.name.includes("Gateway of India"));
+assert.ok(mumbaiGateway, "Gateway of India must be retained");
+assert.equal(mumbaiGateway.geographic_status, "in_destination", "Gateway of India must be in_destination");
+
+const mumbaiMarine = cleanedMumbaiAttractions.find(a => a.name.includes("Marine Drive"));
+assert.ok(mumbaiMarine, "Marine Drive must be retained");
+assert.equal(mumbaiMarine.geographic_status, "in_destination", "Marine Drive must be in_destination");
+
+// Elephanta Caves must be classified as nearby_excursion
+const mumbaiElephanta = cleanedMumbaiAttractions.find(a => a.name.includes("Elephanta"));
+assert.ok(mumbaiElephanta, "Elephanta Caves must be retained");
+assert.equal(mumbaiElephanta.geographic_status, "nearby_excursion", "Elephanta Caves must be nearby_excursion");
+
+// Proximity clustering: Gateway of India and Marine Drive both share waterfront zone
+assert.equal(getAttractionProximityKey(mumbaiGateway, "Mumbai"), "waterfront");
+assert.equal(getAttractionProximityKey(mumbaiMarine, "Mumbai"), "waterfront");
+
+// 3. Foreign destination verification (Tokyo)
+const rawTokyoAttractions = [
+  {
+    id: "att-t1",
+    name: "Tokyo Skytree",
+    description: "Broadcasting and observation tower in Sumida, Tokyo.",
+    source_url: "https://gotokyo.org/skytree",
+    source_title: "Tokyo Skytree - GoTokyo",
+    is_live_result: true
+  },
+  {
+    id: "att-t2",
+    name: "Senso-ji Temple",
+    description: "Tokyo's oldest and most significant ancient Buddhist temple located in Asakusa.",
+    source_url: "https://gotokyo.org/sensoji",
+    source_title: "Senso-ji Temple in Asakusa",
+    is_live_result: true
+  },
+  {
+    id: "att-t3",
+    name: "Mount Fuji Day Trip",
+    description: "Scenic active volcano located 100 km southwest of Tokyo; day trip from Tokyo.",
+    source_url: "https://gotokyo.org/fuji",
+    source_title: "Mount Fuji Excursion",
+    is_live_result: true
+  },
+  {
+    id: "att-t4",
+    name: "Colosseum",
+    description: "Ancient amphitheatre in the centre of the city of Rome, Italy.",
+    source_url: "https://rome.info/colosseum",
+    source_title: "Colosseum in Rome",
+    is_live_result: true
+  }
+];
+
+const cleanedTokyoAttractions = deduplicateAndCleanAttractions(rawTokyoAttractions, "Tokyo");
+const cleanedTokyoNames = cleanedTokyoAttractions.map(a => a.name);
+
+// Colosseum in Rome must be rejected for Tokyo
+assert.ok(!cleanedTokyoNames.includes("Colosseum"), "Colosseum in Rome must be rejected for Tokyo");
+
+const tokyoSkytree = cleanedTokyoAttractions.find(a => a.name.includes("Skytree"));
+assert.ok(tokyoSkytree, "Tokyo Skytree must be retained");
+assert.equal(tokyoSkytree.geographic_status, "in_destination");
+
+const tokyoSensoji = cleanedTokyoAttractions.find(a => a.name.includes("Senso"));
+assert.ok(tokyoSensoji, "Senso-ji must be retained");
+assert.equal(tokyoSensoji.geographic_status, "in_destination");
+
+const tokyoFuji = cleanedTokyoAttractions.find(a => a.name.includes("Fuji"));
+assert.ok(tokyoFuji, "Mount Fuji must be retained");
+assert.equal(tokyoFuji.geographic_status, "nearby_excursion");
+
+// 4. Mumbai 4-day Itinerary Synthesis
+const mumbaiTripData = buildActiveTripData({
+  tripBrief: {
+    destination: "Mumbai",
+    durationDays: 4,
+    budgetTarget: 400,
+    budgetCurrency: "USD",
+    travelStyle: "Balanced Explorer",
+    groupType: "Romantic Couple"
+  },
+  liveResearchResult: {
+    status: "completed",
+    destination: "Mumbai",
+    duration_days: 4,
+    attractions: cleanedMumbaiAttractions,
+    sources: [
+      {
+        id: "src-m1",
+        title: "Mumbai Tourism Official Guide",
+        url: "https://mumbaitourism.gov.in/guide",
+        domain: "mumbaitourism.gov.in",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+assert.equal(mumbaiTripData.days.length, 4, "Must have 4 days");
+// In-destination waterfront sights clustered together
+assert.ok(
+  mumbaiTripData.days[0].slots.morning.title.includes("Gateway of India") ||
+  mumbaiTripData.days[0].slots.morning.title.includes("Marine Drive"),
+  "Day 1 must feature verified Mumbai city sight"
+);
+// Dedicated excursion day for Elephanta Caves
+const excursionDay = mumbaiTripData.days.find(d => d.slots.morning.title.includes("Elephanta"));
+assert.ok(excursionDay, "Elephanta Caves must have its own dedicated day");
+assert.ok(excursionDay.theme.includes("Regional Excursion Day"), "Excursion day must be themed as regional excursion");
+
+// Honest budget under-target warning
+assert.equal(mumbaiTripData.budgetBreakdown.isUnderBudget, true, "Should identify under-budget condition");
+assert.ok(mumbaiTripData.budgetBreakdown.budgetWarning.includes("below our illustrative"), "Must show honest budget warning");
+
+console.log('✅ Check 25: Global research engine matrix verification (Mumbai, Tokyo, universal clustering & budget integrity) verified');
+
+// 26. Regression Check #26: Mumbai root-token bug fix, descriptive prompt parsing, and generic destination preservation
+// 26a. Prompt parsing checks
+const parsedM1 = parseTripPrompt("Mumbai");
+assert.equal(parsedM1.destination, "Mumbai", "Prompt 'Mumbai' must parse to 'Mumbai'");
+
+const parsedM2 = parseTripPrompt("Mumbai and the hills there");
+assert.equal(parsedM2.destination, "Mumbai", "Prompt 'Mumbai and the hills there' must parse to 'Mumbai'");
+
+const parsedM3 = parseTripPrompt("Plan 5 days in Mumbai under $900");
+assert.equal(parsedM3.destination, "Mumbai", "Prompt 'Plan 5 days in Mumbai under $900' must parse to 'Mumbai'");
+assert.equal(parsedM3.durationDays, 5, "Duration must be 5 days");
+assert.equal(parsedM3.budgetTarget, 900, "Budget must be $900");
+
+const parsedM4 = parseTripPrompt("Mumbai and surrounding hills");
+assert.equal(parsedM4.destination, "Mumbai", "Prompt 'Mumbai and surrounding hills' must parse to 'Mumbai'");
+
+// Multi-word legitimate locations must NOT be stripped
+assert.equal(parseTripPrompt("Beverly Hills").destination, "Beverly Hills");
+assert.equal(parseTripPrompt("Trinidad and Tobago").destination, "Trinidad and Tobago");
+assert.equal(parseTripPrompt("Virginia Beach").destination, "Virginia Beach");
+
+// 26b. Geographic mismatch verification across Mumbai prompt variations
+for (const dest of ["Mumbai", "Mumbai and the hills there", "Mumbai and surrounding hills"]) {
+  // Legitimate Mumbai landmarks must NOT be rejected
+  assert.equal(isGeographicMismatch("Gateway of India", "Historic arch monument in Colaba, Mumbai.", dest), false, `Gateway of India must not be rejected for ${dest}`);
+  assert.equal(isGeographicMismatch("Elephanta Caves", "Ancient rock-cut temples on an island 10 km from Mumbai.", dest), false, `Elephanta Caves must not be rejected for ${dest}`);
+  assert.equal(isGeographicMismatch("Chhatrapati Shivaji Maharaj Terminus", "Historic railway terminal in Mumbai.", dest), false, `CST must not be rejected for ${dest}`);
+  assert.equal(isGeographicMismatch("Marine Drive", "Coast boulevard in South Mumbai.", dest), false, `Marine Drive must not be rejected for ${dest}`);
+
+  // Genuinely out-of-destination landmarks MUST be rejected
+  assert.equal(isGeographicMismatch("Taj Mahal", "Mausoleum in Agra, Uttar Pradesh.", dest), true, `Taj Mahal must be rejected for ${dest}`);
+  assert.equal(isGeographicMismatch("Colosseum", "Amphitheatre in Rome, Italy.", dest), true, `Colosseum must be rejected for ${dest}`);
+}
+
+// 26c. Generic destination not in predefined tables (e.g. Reykjavik, Iceland)
+const genericDest = "Reykjavik, Iceland";
+assert.equal(isGeographicMismatch("Hallgrimskirkja", "Iconic Lutheran church in central Reykjavik.", genericDest), false, "Hallgrimskirkja must not be rejected for Reykjavik");
+assert.equal(isGeographicMismatch("Taj Mahal", "Mausoleum in Agra.", genericDest), true, "Taj Mahal must be rejected for Reykjavik");
+assert.equal(isGeographicMismatch("Eiffel Tower", "Located in Paris, France.", genericDest), true, "Eiffel Tower must be rejected for Reykjavik");
+
+// 26d. Full 5-day itinerary synthesis with verified Mumbai landmarks
+const rawMumbaiPromptAttractions = [
+  {
+    id: "att-mp1",
+    name: "Gateway of India",
+    description: "Iconic 20th-century basalt arch monument overlooking Mumbai Harbour in Colaba.",
+    source_url: "https://mumbaitourism.gov.in/gateway",
+    source_title: "Gateway of India - Mumbai Tourism",
+    is_live_result: true
+  },
+  {
+    id: "att-mp2",
+    name: "Chhatrapati Shivaji Maharaj Terminus",
+    description: "UNESCO World Heritage railway terminus and historic landmark in the Fort district of Mumbai.",
+    source_url: "https://mumbaitourism.gov.in/cst",
+    source_title: "CST Terminus Guide",
+    is_live_result: true
+  },
+  {
+    id: "att-mp3",
+    name: "Elephanta Caves",
+    description: "Cave temples dedicated to Shiva located on an island 10 km east of Mumbai accessible by ferry.",
+    source_url: "https://mumbaitourism.gov.in/elephanta",
+    source_title: "Elephanta Caves Island Guide",
+    is_live_result: true
+  },
+  {
+    id: "att-mp4",
+    name: "Taj Mahal",
+    description: "Ivory-white marble mausoleum on the right bank of the river Yamuna in Agra, Uttar Pradesh.",
+    source_url: "https://uptourism.gov.in/taj-mahal",
+    source_title: "Taj Mahal in Agra",
+    is_live_result: true
+  }
+];
+
+const cleanedMumbaiPromptAttractions = deduplicateAndCleanAttractions(rawMumbaiPromptAttractions, "Mumbai and the hills there");
+const cleanedPromptNames = cleanedMumbaiPromptAttractions.map(a => a.name);
+
+// Out-of-destination landmark rejected
+assert.ok(!cleanedPromptNames.includes("Taj Mahal"), "Taj Mahal in Agra must be rejected for Mumbai and the hills there");
+
+// Gateway of India & CST verified in-destination
+const gatewayPrompt = cleanedMumbaiPromptAttractions.find(a => a.name.includes("Gateway of India"));
+assert.ok(gatewayPrompt, "Gateway of India must be present");
+assert.equal(gatewayPrompt.geographic_status, "in_destination");
+
+const cstPrompt = cleanedMumbaiPromptAttractions.find(a => a.name.includes("Terminus") || a.name.includes("Chhatrapati"));
+assert.ok(cstPrompt, "CST must be present");
+assert.equal(cstPrompt.geographic_status, "in_destination");
+
+// Elephanta Caves verified as nearby excursion
+const elephantaPrompt = cleanedMumbaiPromptAttractions.find(a => a.name.includes("Elephanta"));
+assert.ok(elephantaPrompt, "Elephanta Caves must be present");
+assert.equal(elephantaPrompt.geographic_status, "nearby_excursion");
+
+// 5-day itinerary synthesis
+const mumbai5DayTripData = buildActiveTripData({
+  tripBrief: {
+    destination: "Mumbai",
+    durationDays: 5,
+    budgetTarget: 900,
+    budgetCurrency: "USD",
+    travelStyle: "Balanced Explorer",
+    groupType: "Romantic Couple"
+  },
+  liveResearchResult: {
+    status: "completed",
+    destination: "Mumbai",
+    duration_days: 5,
+    attractions: cleanedMumbaiPromptAttractions,
+    sources: [
+      {
+        id: "src-m1",
+        title: "Mumbai Tourism Official Guide",
+        url: "https://mumbaitourism.gov.in/guide",
+        domain: "mumbaitourism.gov.in",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+assert.equal(mumbai5DayTripData.days.length, 5, "Must have 5 days");
+// Confirmed sight in Day 1 and Day 2
+assert.ok(mumbai5DayTripData.days[0].slots.morning.title.includes("Gateway of India") || mumbai5DayTripData.days[0].slots.morning.title.includes("Terminus"), "Day 1 must feature verified landmark");
+// Dedicated regional excursion day for Elephanta Caves
+const excursionDay5 = mumbai5DayTripData.days.find(d => d.slots.morning.title.includes("Elephanta"));
+assert.ok(excursionDay5, "Elephanta Caves must have its own dedicated day");
+// Days without confirmed sights retain honest flexible day fallback
+const flexibleDay = mumbai5DayTripData.days.find(d => d.theme.includes("Flexible Exploration Day"));
+assert.ok(flexibleDay, "Days without enough verified sights must retain transparent flexible day fallback");
+
+console.log('✅ Check 26: Mumbai root-token bug fix, descriptive prompt parsing, and generic destination preservation verified');
+
+// 27. Regression Check #27: Chennai Duration Integrity, Srikalahasti Excursion Status, Mixed Excerpt Rejection & Budget Tier Baselines
+const chennai5DayPrompt = "Plan 5 days in Chennai under $900";
+const parsedChennai5 = parseTripPrompt(chennai5DayPrompt);
+assert.equal(parsedChennai5.destination, "Chennai");
+assert.equal(parsedChennai5.durationDays, 5);
+assert.equal(parsedChennai5.hasExplicitDuration, true);
+assert.equal(parsedChennai5.budgetTarget, 900);
+assert.equal(parsedChennai5.budgetCurrency, "USD");
+
+const chennai6DayPrompt = "Plan 6 days in Chennai under $900";
+const parsedChennai6 = parseTripPrompt(chennai6DayPrompt);
+assert.equal(parsedChennai6.durationDays, 6);
+assert.equal(parsedChennai6.hasExplicitDuration, true);
+
+// Duration integrity in buildActiveTripData: Stale durationDays: 6 in brief must be overridden by 5-day prompt
+const rawChennaiAttractions = [
+  {
+    id: "att-ch1",
+    name: "Marina Beach",
+    description: "Famous natural urban sandy beach along the Bay of Bengal in Chennai.",
+    source_url: "https://chennaitourism.travel/marina-beach",
+    source_title: "Marina Beach Guide",
+    is_live_result: true
+  },
+  {
+    id: "att-ch2",
+    name: "San Thome Basilica",
+    description: "Catholic minor basilica built by Portuguese explorers in Santhome, Chennai.",
+    source_url: "https://chennaitourism.travel/san-thome",
+    source_title: "San Thome Church",
+    is_live_result: true
+  },
+  {
+    id: "att-ch3",
+    name: "Kapaleeshwarar Temple",
+    description: "7th-century temple dedicated to Lord Shiva in Mylapore, Chennai.",
+    source_url: "https://chennaitourism.travel/kapaleeshwarar",
+    source_title: "Kapaleeshwarar Temple Guide",
+    is_live_result: true
+  },
+  {
+    id: "att-ch4",
+    name: "Srikalahasti Temple",
+    description: "Ancient Shiva shrine located in Andhra Pradesh, around 115 km from Chennai.",
+    source_url: "https://chennaitourism.travel/places-near-chennai",
+    source_title: "Places to Visit Near Chennai",
+    is_live_result: true
+  },
+  {
+    id: "att-ch5",
+    name: "Lord Ramanujar Temple",
+    description: "You can visit Lord Ramanujar Temple, Valluvar Kottam and the Great Rajiv Gandhi Memorial during your tour.",
+    source_url: "https://chennaitourism.travel/temples",
+    source_title: "Chennai Cultural Sights",
+    is_live_result: true
+  }
+];
+
+// Deduplicate and clean attractions
+const cleanedChennai = deduplicateAndCleanAttractions(rawChennaiAttractions, "Chennai");
+
+// Check Srikalahasti is classified as nearby_excursion, NEVER in_destination
+const srikalahastiAtt = cleanedChennai.find(a => a.name.includes("Srikalahasti"));
+assert.ok(srikalahastiAtt, "Srikalahasti Temple must be retained");
+assert.equal(srikalahastiAtt.geographic_status, "nearby_excursion", "Srikalahasti must be nearby_excursion");
+assert.ok(srikalahastiAtt.location_note.includes("115 km"), "Srikalahasti must disclose ~115 km distance");
+assert.ok(srikalahastiAtt.location_note.includes("Andhra Pradesh"), "Srikalahasti must disclose Andhra Pradesh state");
+
+// Check Marina Beach and San Thome Basilica are in_destination
+const marinaAtt = cleanedChennai.find(a => a.name.includes("Marina Beach"));
+assert.ok(marinaAtt, "Marina Beach must be present");
+assert.equal(marinaAtt.geographic_status, "in_destination");
+
+const basilicaAtt = cleanedChennai.find(a => a.name.includes("San Thome"));
+assert.ok(basilicaAtt, "San Thome Basilica must be present");
+assert.equal(basilicaAtt.geographic_status, "in_destination");
+
+// Check Lord Ramanujar Temple description does NOT leak mixed listicle text mentioning Valluvar Kottam
+const ramanujarAtt = cleanedChennai.find(a => a.name.includes("Ramanujar"));
+assert.ok(ramanujarAtt, "Lord Ramanujar Temple must be present");
+assert.ok(!ramanujarAtt.description.includes("Valluvar Kottam"), "Mixed listicle text must be rejected from individual evidence");
+assert.equal(ramanujarAtt.evidence_quality, "passing_mention");
+
+// Synthesize 5-day itinerary with stale durationDays: 6 in tripBrief
+const chennaiTripData = buildActiveTripData({
+  tripBrief: {
+    originalPrompt: chennai5DayPrompt,
+    prompt: chennai5DayPrompt,
+    destination: "Chennai",
+    durationDays: 6, // Stale state from prior run
+    budgetTarget: 900,
+    budgetCurrency: "USD",
+    travelStyle: "Luxury Comfort",
+    groupType: "Romantic Couple"
+  },
+  liveResearchResult: {
+    status: "completed",
+    destination: "Chennai",
+    duration_days: 5,
+    attractions: cleanedChennai,
+    sources: [
+      {
+        id: "src-c1",
+        title: "Chennai Tourism Official Guide",
+        url: "https://chennaitourism.travel/guide",
+        domain: "chennaitourism.travel",
+        is_live_result: true
+      }
+    ]
+  },
+  useDemoFallback: false
+});
+
+// Duration integrity: Itinerary MUST have exactly 5 days, not 6
+assert.equal(chennaiTripData.days.length, 5, `Expected exactly 5 days, got ${chennaiTripData.days.length}`);
+
+// Dedicated excursion day for Srikalahasti
+const chennaiExcursionDay = chennaiTripData.days.find(d => d.slots.morning.title.includes("Srikalahasti"));
+assert.ok(chennaiExcursionDay, "Srikalahasti Temple must have its own dedicated excursion day");
+
+// Budget integrity & tier comparison
+const chennaiBudget = chennaiTripData.budgetBreakdown;
+assert.ok(chennaiBudget, "budgetBreakdown must exist on tripData");
+assert.ok(chennaiBudget.tierBenchmarks, "budgetBreakdown must include tierBenchmarks");
+assert.equal(chennaiBudget.tierBenchmarks.length, 3, "tierBenchmarks must have 3 tiers");
+const backpackerTier = chennaiBudget.tierBenchmarks.find(t => t.tier === "Backpacker");
+assert.ok(backpackerTier, "Backpacker tier benchmark must exist");
+assert.equal(backpackerTier.dailyRate, 75, "Backpacker dailyRate must be 75");
+assert.equal(backpackerTier.totalUsd, 375, "Backpacker totalUsd for 5 days must be 375");
+
+const balancedTier = chennaiBudget.tierBenchmarks.find(t => t.tier === "Balanced Explorer");
+assert.ok(balancedTier, "Balanced Explorer tier benchmark must exist");
+assert.equal(balancedTier.dailyRate, 210, "Balanced Explorer dailyRate must be 210");
+assert.equal(balancedTier.totalUsd, 1050, "Balanced Explorer totalUsd for 5 days must be 1050");
+
+const luxuryTier = chennaiBudget.tierBenchmarks.find(t => t.tier === "Luxury Comfort");
+assert.ok(luxuryTier, "Luxury Comfort tier benchmark must exist");
+assert.equal(luxuryTier.dailyRate, 520, "Luxury Comfort dailyRate must be 520");
+assert.equal(luxuryTier.totalUsd, 2600, "Luxury Comfort totalUsd for 5 days must be 2600");
+
+// Under budget warning
+assert.equal(chennaiBudget.isUnderBudget, true, "isUnderBudget must be true when target 900 < 2600");
+assert.ok(chennaiBudget.budgetWarning.includes("900"), "budgetWarning must mention target 900");
+assert.ok(chennaiBudget.budgetWarning.includes("Backpacker"), "budgetWarning must recommend Backpacker tier");
+
+console.log('✅ Check 27: Chennai Duration Integrity, Srikalahasti Excursion Status, Mixed Excerpt Rejection & Budget Tier Baselines verified');
 
 console.log('\n🎉 ALL FRONTEND DESTINATION FIDELITY & RESULTS QUALITY VERIFICATIONS PASSED!');
 

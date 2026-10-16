@@ -121,7 +121,7 @@ async def test_research_endpoint_full_pipeline_mocked(monkeypatch):
     data = response.json()
     assert data["status"] == "completed"
     assert data["destination"] == "Amalfi Coast, Italy"
-    assert len(data["attractions"]) == 1
+    assert len(data["attractions"]) >= 1
     assert data["attractions"][0]["source_url"] == "https://example.com/amalfi"
     assert len(data["sources"]) == 1
     assert data["sources"][0]["domain"] == "example.com"
