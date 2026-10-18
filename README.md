@@ -1,9 +1,11 @@
-# TripPilot AI — Frontend Prototype (AZINHACK '26)
+# ✈️ TripPilot AI — Your Next Great Trip, Already Figured Out.
 
-> **"Your next great trip, already figured out."**  
-> An AI-powered travel research agent prototype featuring editorial typography, interactive 3D agency aesthetics, and source-backed itinerary synthesis.
+> **An AI-powered travel research agent that doesn't just plan your trip — it researches the world behind it.**
 
----
+**Built for AZINHACK '26**
+
+Natural-language planning · Live web research · Geographic verification · Evidence-backed itineraries
+
 
 ## 🧭 Product Overview
 

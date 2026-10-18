@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import Navbar from './components/layout/Navbar';
 import Footer from './components/layout/Footer';
-import StateInspectorBar from './components/layout/StateInspectorBar';
 import HeroSection from './components/hero/HeroSection';
 import QuestionnaireModal from './components/questionnaire/QuestionnaireModal';
 import ScopeSelector from './components/scope/ScopeSelector';
@@ -447,16 +446,6 @@ export default function App() {
         tripBrief={tripBrief}
         selectedCategories={selectedCategories}
         onConfirmLaunch={handleConfirmLaunch}
-      />
-
-      {/* Hackathon State Inspector Floating Dock */}
-      <StateInspectorBar
-        currentView={currentView}
-        setCurrentView={setCurrentView}
-        selectedCity={selectedCity}
-        setSelectedCity={setSelectedCity}
-        reducedMotion={reducedMotion}
-        setReducedMotion={setReducedMotion}
       />
 
       {/* Footer */}

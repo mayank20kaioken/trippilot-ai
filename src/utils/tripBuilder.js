@@ -23,6 +23,20 @@ const TRACKING_PARAMS = new Set([
   'fbclid', 'gclid', 'msclkid', 'ref', 'source'
 ]);
 
+const RECOGNIZED_PLACE_NOUNS = new Set([
+  'temple', 'fort', 'palace', 'ghat', 'jhula', 'ashram', 'waterfall', 'falls',
+  'valley', 'pass', 'lake', 'tso', 'monastery', 'gompa', 'shrine', 'pavilion', 'garden',
+  'gardens', 'museum', 'market', 'bazaar', 'park', 'caves', 'cave', 'peak',
+  'point', 'sanctuary', 'springs', 'bridge', 'cathedral', 'mosque', 'church',
+  'stepwell', 'baori', 'haveli', 'observatory', 'mantar', 'mahal', 'ridge',
+  'lodge', 'theatre', 'railway', 'road', 'street', 'promenade', 'hill', 'hills',
+  'complex', 'institute', 'niwas', 'setu', 'tomb', 'minar', 'gate', 'gateway', 'masjid',
+  'chowk', 'qila', 'bhavan', 'mandir', 'gurudwara', 'memorial', 'stupa', 'chorten',
+  'fortress', 'tower', 'plaza', 'square', 'village', 'quarter', 'alley', 'center',
+  'centre', 'planetarium', 'aquarium', 'zoo', 'hall', 'la', 'dargah', 'arch', 'terminus',
+  'beach', 'beaches', 'basilica', 'kottam', 'gallery', 'galleries'
+]);
+
 const LISTICLE_REGEX = /(?:\b(?:\d+|the|a|an)?\s*(?:best|top|unmissable|must[-\s]?see|must[-\s]?visit|essential|things|places|sights|attractions|activities|spots|experiences|coolest|awesome|greatest|cheap|free|popular|famous)\b|\b(?:things\s+to\s+do|places\s+to\s+visit|places\s+to\s+see|what\s+to\s+do|what\s+to\s+see|where\s+to\s+go|where\s+to\s+stay|where\s+to\s+eat|how\s+to\s+reach|how\s+to\s+get|best\s+places|top\s+attractions|top\s+sights|tourist\s+places|travel\s+guide|complete\s+guide|sights\s+guide|attractions\s+guide|city\s+guide|visitor\s+guide|pocket\s+guide|trip\s+planner|trip\s+guide|itinerary\s+guide|itinerary|must[-\s]?do|experiences\s+in|top\s+things|travel\s+tips|travel\s+blog|vacation\s+guide|holiday\s+guide|overview\s+of|introduction\s+to|everything\s+you\s+need\s+to\s+know|visiting\s+[a-z]+|exploring\s+[a-z]+|ultimate\s+guide|book\s+now|book\s+tickets|tour\s+package|day\s+tours?|guided\s+tours?|tours?\s+(?:and|&)\s+excursions?|excursions?\s+(?:and|&)\s+tours?|outdoor\s+activities|cultural\s+&\s+scenic\s+highlights|scenic\s+highlights|travel\s+highlights|destination\s+highlights)\b|\b(?:instagram|tiktok|facebook|pinterest|youtube|twitter|reels|shorts|vlog|photo\s+by|photos?\s+and\s+videos?|watch\s+on|pinned\s+by|likes?,\s*\d+\s*comments?)\b)/i;
 
 const GENERIC_EDITORIAL_REGEX = /\b(?:the\s+game\s+plans?|game\s+plans?|day\s+plans?|action\s+plans?|travel\s+plans?|trip\s+plans?|sample\s+plans?|daily\s+breakdown|step[-\s]by[-\s]step|what\s+to\s+expect|what\s+to\s+pack|pro\s+tips?|quick\s+tips?|travel\s+tips?|practical\s+tips?|honest\s+review|when\s+to\s+go|how\s+to\s+get\s+there|getting\s+there|getting\s+around|where\s+to\s+stay|where\s+to\s+eat|final\s+thoughts|final\s+words|bottom\s+line|key\s+takeaways?|read\s+next|leave\s+a\s+reply|table\s+of\s+contents|faq|faqs|frequently\s+asked|the\s+basics|essential\s+info|good\s+to\s+know|our\s+recommendations?|top\s+recommendations?|morning\s+routine|evening\s+plans?|afternoon\s+plans?|day\s+\d+|stop\s+\d+|step\s+\d+)\b/i;
@@ -69,11 +83,16 @@ export function canonicalizeUrl(rawUrl) {
 export function normalizeAttractionKey(name, destination = '') {
   if (!name || typeof name !== 'string') return '';
   let s = name.toLowerCase().trim();
+  s = s.replace(/^(?:the|a|an)\s+/i, '');
+  s = s.replace(/\bsanthome\b/g, 'san thome');
+  s = s.replace(/\bcathedral\s+basilica\b/g, 'basilica');
+  s = s.replace(/\bsan\s+thome\s+cathedral\b/g, 'san thome basilica');
+
   if (destination) {
     const primaryDest = destination.split(',')[0].trim().toLowerCase();
     if (primaryDest && s !== primaryDest) {
       const stripped = s.replace(new RegExp(`\\b(?:in|at|near|of)?\\s*${primaryDest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), ' ').trim();
-      if (stripped) s = stripped;
+      if (stripped && !RECOGNIZED_PLACE_NOUNS.has(stripped)) s = stripped;
     }
     // Also strip constituent sub-region / city names if attached to the attraction name
     for (const [k, subList] of Object.entries(DESTINATION_SUB_REGIONS)) {
@@ -81,19 +100,21 @@ export function normalizeAttractionKey(name, destination = '') {
         for (const sub of subList) {
           if (s !== sub && s.includes(sub)) {
             const stripped = s.replace(new RegExp(`\\b(?:in|at|near|of)?\\s*${sub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), ' ').trim();
-            if (stripped) s = stripped;
+            if (stripped && !RECOGNIZED_PLACE_NOUNS.has(stripped)) s = stripped;
           }
         }
       }
     }
   }
-  s = s.replace(/^(?:the|a|an)\s+/i, '');
   s = s.replace(/\bhidimba\b/g, 'hadimba');
   s = s.replace(/\bdevi\s+temple\b/g, 'temple');
   s = s.replace(/\blakshman\b/g, 'laxman');
   s = s.replace(/\bamer\b/g, 'amber');
   s = s.replace(/\bfort\s+(?:and|&)\s+palace\b/g, 'fort');
   s = s.replace(/\bpalace\s+(?:and|&)\s+fort\b/g, 'fort');
+  s = s.replace(/\bsanthome\b/g, 'san thome');
+  s = s.replace(/\bcathedral\s+basilica\b/g, 'basilica');
+  s = s.replace(/\bsan\s+thome\s+cathedral\b/g, 'san thome basilica');
   s = s.replace(/[^a-z0-9]+/g, ' ').trim();
   return s;
 }
@@ -348,7 +369,7 @@ const CORE_IN_DESTINATION_LANDMARKS = {
   ],
   chennai: [
     'kapaleeshwarar temple', 'kapaleeswarar temple', 'marina beach', 'san thome basilica',
-    'santhome cathedral', 'fort st george', 'fort saint george', 'government museum',
+    'fort st george', 'fort saint george', 'government museum',
     'guindy national park', 'valluvar kottam', "elliot's beach", 'elliots beach',
     "edward elliot's beach", 'parthasarathy temple', 'dakshinachitra', 'national art gallery',
     'birla planetarium', 'vadapalani andavar temple', 'semmozhi poonga'
@@ -635,6 +656,7 @@ export function classifyAttractionGeography(att = {}, destination = '') {
   // Source context grounding check: if source title or URL is dedicated to this destination
   // Guard: Never ground candidate as in_destination if its known location is outside this destination, or if it matches an excursion keyword
   let isKnownOutOfDestination = false;
+  let knownOutLoc = null;
   for (const [lmKey, loc] of Object.entries(KNOWN_PLACE_LOCATIONS)) {
     const lmNorm = lmKey.toLowerCase().replace(/['’\u2018\u2019\ufffd]+/g, "'").trim();
     const lmAlphanum = lmNorm.replace(/[^a-z0-9]+/g, ' ').trim();
@@ -644,12 +666,27 @@ export function classifyAttractionGeography(att = {}, destination = '') {
       const locCountry = (loc.country || '').toLowerCase();
       if (!((locCity && validDestTokens.has(locCity)) || (locState && validDestTokens.has(locState)) || (locCountry && validDestTokens.has(locCountry)))) {
         isKnownOutOfDestination = true;
+        knownOutLoc = loc;
         break;
       }
     }
   }
 
-  if (!matchedInDest && !isKnownOutOfDestination && !excursionList.some(kw => nameLower.includes(kw)) && (att.source_title || att.sourceTitle || att.source_url || att.sourceUrl)) {
+  if (isKnownOutOfDestination || excursionList.some(kw => nameLower.includes(kw))) {
+    const outState = knownOutLoc?.state ? knownOutLoc.state.charAt(0).toUpperCase() + knownOutLoc.state.slice(1) : '';
+    const excursionNote = (nameLower.includes('srikalahasti') || nameLower.includes('tirupati'))
+      ? `Located in Andhra Pradesh (~115 km from ${primaryDest}, approx 2.5-3 hours travel). Referenced as a regional excursion. Distance, transit route, and interstate travel logistics must be verified before scheduling.`
+      : (outState
+        ? `Located in ${outState} outside ${primaryDest}. Referenced as a regional excursion. Exact road distance and travel time are not verified in this crawl — check the linked source before scheduling.`
+        : `Referenced as a regional excursion or outside central ${primaryDest}. Exact road distance and travel time are not verified in this crawl — check the linked source before scheduling.`);
+    return {
+      geographic_status: 'nearby_excursion',
+      geographic_label: `Nearby Excursion • Verify Distance from ${primaryDest}`,
+      location_note: excursionNote
+    };
+  }
+
+  if (!matchedInDest && (att.source_title || att.sourceTitle || att.source_url || att.sourceUrl)) {
     const srcCtx = `${att.source_title || att.sourceTitle || ''} ${att.source_url || att.sourceUrl || ''}`.toLowerCase();
     if (srcCtx.includes(destKey)) {
       matchedInDest = true;
@@ -814,7 +851,7 @@ export function isMultiAttractionListText(text = '', destination = '', currentLa
     nm => !(curNorm && (nm.toLowerCase().includes(curNorm) || curNorm.includes(nm.toLowerCase())))
   );
   if (distinctNamed.length >= 1 && curNorm) {
-    if (/,\s*|\b(?:and|along\s+with|as\s+well\s+as|together\s+with|including|such\s+as)\b/i.test(lower)) {
+    if (/,\s*|\b(?:and|or|along\s+with|as\s+well\s+as|together\s+with|including|such\s+as|plus)\b/i.test(lower)) {
       return true;
     }
   }
@@ -1235,7 +1272,7 @@ export function buildActiveTripData({
   const matchingPreset = SAMPLE_TRIPS[destination];
 
   // If using demo fallback (or initial pre-research demo view) and a preset exists without custom explicit budget override, return preset
-  if (!isLive && (!liveResearchResult || useDemoFallback) && matchingPreset && !hasExplicitBudget) {
+  if (!isLive && (!liveResearchResult || useDemoFallback) && matchingPreset && !hasExplicitBudget && !parsedFallback?.hasExplicitDuration) {
     return {
       ...matchingPreset,
       isLiveResearch: false,
@@ -1681,7 +1718,7 @@ export function buildActiveTripData({
       synthesisDate: new Date().toISOString().split('T')[0],
       generatedPrompt: originalPrompt
     },
-    days: matchingPreset && !isLive && (!liveResearchResult || useDemoFallback) ? matchingPreset.days : generatedDays,
+    days: matchingPreset && !isLive && (!liveResearchResult || useDemoFallback) && !parsedFallback?.hasExplicitDuration ? matchingPreset.days : generatedDays,
     accommodations: matchingPreset && !isLive && (!liveResearchResult || useDemoFallback) ? matchingPreset.accommodations : accommodations,
     attractions: liveAttractions.length > 0
       ? liveAttractions

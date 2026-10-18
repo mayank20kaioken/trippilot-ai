@@ -27,6 +27,10 @@ export default function ObloSculptureCanvas({ className = "" }) {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
+    renderer.domElement.style.display = 'block';
+    renderer.domElement.style.maxWidth = '100%';
+    renderer.domElement.style.maxHeight = '100%';
+    renderer.domElement.style.pointerEvents = 'auto';
 
     container.appendChild(renderer.domElement);
 
@@ -296,17 +300,12 @@ export default function ObloSculptureCanvas({ className = "" }) {
   }, []);
 
   return (
-    <div className={`relative flex items-center justify-center select-none ${className}`}>
+    <div className={`relative w-full max-w-[560px] mx-auto h-[400px] sm:h-[460px] lg:h-[480px] rounded-3xl overflow-hidden bg-gradient-to-b from-[#0e1c52]/40 via-[#091238]/60 to-[#060b24]/80 border border-white/15 backdrop-blur-md shadow-2xl flex items-center justify-center select-none ${className}`}>
       <div 
         ref={mountRef} 
-        className="w-full h-[440px] sm:h-[480px] lg:h-[520px] max-w-[620px] mx-auto cursor-grab active:cursor-grabbing"
-        title="Interactive 3D Agency Sculpture - Move cursor to tilt"
+        className="w-full h-full cursor-grab active:cursor-grabbing overflow-hidden flex items-center justify-center"
+        title="Interactive 3D Tactile Sculpture - Move cursor to tilt"
       />
-      {/* Subtle indicator pill */}
-      <div className="absolute bottom-2 right-4 pointer-events-none flex items-center gap-2 px-3 py-1 rounded-full bg-black/30 backdrop-blur-md text-[11px] font-mono tracking-wider text-white/80 border border-white/10">
-        <span className="w-1.5 h-1.5 rounded-full bg-[#FFE600] animate-pulse"></span>
-        3D TACTILE ENGINE • INTERACTIVE
-      </div>
     </div>
   );
 }

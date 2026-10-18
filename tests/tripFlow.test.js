@@ -9,7 +9,8 @@ import {
   isGeographicMismatch,
   isPlausibleNamedPlace,
   isMultiAttractionListText,
-  getAttractionProximityKey
+  getAttractionProximityKey,
+  normalizeAttractionKey
 } from '../src/utils/tripBuilder.js';
 
 console.log('🧪 Starting TripPilot AI Destination Fidelity & Results Quality Verification...\n');
@@ -2039,7 +2040,60 @@ assert.ok(chennaiBudget.budgetWarning.includes("Backpacker"), "budgetWarning mus
 
 console.log('✅ Check 27: Chennai Duration Integrity, Srikalahasti Excursion Status, Mixed Excerpt Rejection & Budget Tier Baselines verified');
 
+// 28. Regression Check #28: San Thome Basilica / Santhome Cathedral Basilica Deduplication
+const k1 = normalizeAttractionKey("Santhome Cathedral Basilica", "Chennai");
+const k2 = normalizeAttractionKey("San Thome Basilica", "Chennai");
+const k3 = normalizeAttractionKey("Santhome Cathedral", "Chennai");
+assert.equal(k1, "san thome basilica");
+assert.equal(k2, "san thome basilica");
+assert.equal(k3, "san thome basilica");
+
+const santhomeDedupTrip = buildActiveTripData({
+  tripBrief: {
+    destination: "Chennai",
+    duration_days: 3,
+    budget_tier: "Balanced Explorer",
+    group_size: "Couple",
+    prompt: "Plan 3 days in Chennai"
+  },
+  liveResearchResult: {
+    status: "completed",
+    destination: "Chennai",
+    duration_days: 3,
+    attractions: [
+      {
+        id: "att-s1",
+        name: "Santhome Cathedral Basilica",
+        description: "Referenced in source overview; detailed individual venue prose not provided in snippet.",
+        source_url: "https://example.com/s1",
+        source_title: "Overview",
+        evidence_quality: "passing_mention"
+      },
+      {
+        id: "att-s2",
+        name: "San Thome Basilica",
+        description: "Historic neo-Gothic Catholic minor basilica built over the tomb of Saint Thomas in Chennai.",
+        source_url: "https://example.com/s2",
+        source_title: "San Thome Guide",
+        evidence_quality: "verified_grounded"
+      }
+    ],
+    sources: [
+      { id: "src-1", title: "Source 1", url: "https://example.com/s1" },
+      { id: "src-2", title: "Source 2", url: "https://example.com/s2" }
+    ]
+  },
+  useDemoFallback: false
+});
+
+const santhomeCards = santhomeDedupTrip.attractions.filter(a => a.name.toLowerCase().includes("thome") || a.name.toLowerCase().includes("santhome"));
+assert.equal(santhomeCards.length, 1, `Expected exactly 1 San Thome card, got ${santhomeCards.length}`);
+assert.ok(santhomeCards[0].description.includes("tomb of Saint Thomas"));
+assert.equal(santhomeCards[0].evidence_quality, "verified_grounded");
+console.log('✅ Check 28: San Thome Basilica / Santhome Cathedral deduplication & evidence upgrade verified');
+
 console.log('\n🎉 ALL FRONTEND DESTINATION FIDELITY & RESULTS QUALITY VERIFICATIONS PASSED!');
+
 
 
 

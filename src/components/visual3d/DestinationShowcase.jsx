@@ -7,24 +7,21 @@ const FEATURED_DESTINATIONS = [
     subtitle: "Ancient Zen & Bamboo Sanctuaries",
     image: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1200&q=80",
     badge: "Most Researched",
-    vibe: "Serene & Culinary",
-    temperature: "19°C • Clear"
+    vibe: "Serene & Culinary"
   },
   {
     name: "Amalfi Coast, Italy",
     subtitle: "Pastel Cliffs & Lemon Groves",
     image: "https://images.unsplash.com/photo-1533105079780-92b9be482077?auto=format&fit=crop&w=1200&q=80",
     badge: "Trending",
-    vibe: "Romantic & Coastal",
-    temperature: "24°C • Sunny"
+    vibe: "Romantic & Coastal"
   },
   {
     name: "Reykjavik & Ring Road",
     subtitle: "Cascades & Geothermal Lagoons",
     image: "https://images.unsplash.com/photo-1504893524553-b855bce32c67?auto=format&fit=crop&w=1200&q=80",
     badge: "Expedition",
-    vibe: "Wild & Cinematic",
-    temperature: "8°C • Crisp"
+    vibe: "Wild & Cinematic"
   }
 ];
 
@@ -33,7 +30,7 @@ export default function DestinationShowcase({ onSelectDestination }) {
   const current = FEATURED_DESTINATIONS[activeIdx];
 
   return (
-    <div className="relative w-full max-w-[620px] mx-auto h-[440px] sm:h-[480px] lg:h-[520px] rounded-3xl overflow-hidden shadow-2xl border border-white/20 group">
+    <div className="relative w-full max-w-[560px] mx-auto h-[400px] sm:h-[460px] lg:h-[480px] rounded-3xl overflow-hidden shadow-2xl border border-white/20 group">
       {/* Background Image */}
       <img
         src={current.image}
@@ -44,14 +41,11 @@ export default function DestinationShowcase({ onSelectDestination }) {
       {/* Gradient overlays */}
       <div className="absolute inset-0 bg-gradient-to-t from-[#0B1545]/90 via-[#0B1545]/30 to-black/20" />
 
-      {/* Top badges */}
-      <div className="absolute top-6 left-6 right-6 flex items-center justify-between">
+      {/* Top badge */}
+      <div className="absolute top-6 left-6 flex items-center">
         <span className="px-3.5 py-1.5 rounded-full bg-[#FFE600] text-black font-semibold text-xs tracking-wider uppercase shadow-md flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5 text-black" />
           {current.badge}
-        </span>
-        <span className="px-3.5 py-1.5 rounded-full bg-black/40 backdrop-blur-md text-white/90 text-xs font-mono border border-white/15">
-          {current.temperature}
         </span>
       </div>
 

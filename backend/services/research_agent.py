@@ -139,27 +139,35 @@ def _normalize_attraction_key(name: str, dest: str = "") -> str:
     if not name:
         return ""
     s = name.lower().strip()
-    # Remove destination name suffix if attached (never strip if attraction itself is the place name)
+    s = re.sub(r"^(?:the|a|an)\s+", "", s)
+    s = re.sub(r"\bsanthome\b", "san thome", s)
+    s = re.sub(r"\bcathedral\s+basilica\b", "basilica", s)
+    s = re.sub(r"\bsan\s+thome\s+cathedral\b", "san thome basilica", s)
+
+    # Remove destination name suffix if attached (never strip if attraction itself is the place name or if stripping leaves only a generic place noun)
     if dest:
         dest_primary = dest.split(",")[0].strip().lower()
         if dest_primary and s != dest_primary:
             cand_stripped = re.sub(rf"\b(?:in|at|near|of)?\s*{re.escape(dest_primary)}\b", " ", s).strip()
-            if cand_stripped:
+            if cand_stripped and cand_stripped not in RECOGNIZED_PLACE_NOUNS:
                 s = cand_stripped
         for k, sub_list in DESTINATION_SUB_REGIONS.items():
             if k in dest_primary or dest_primary in k:
                 for sub in sub_list:
                     if s != sub and sub in s:
                         cand_stripped = re.sub(rf"\b(?:in|at|near|of)?\s*{re.escape(sub)}\b", " ", s).strip()
-                        if cand_stripped:
+                        if cand_stripped and cand_stripped not in RECOGNIZED_PLACE_NOUNS:
                             s = cand_stripped
-    s = re.sub(r"^(?:the|a|an)\s+", "", s)
+
     # Normalize common synonymous tokens
     s = re.sub(r"\bhidimba\b", "hadimba", s)
     s = re.sub(r"\bdevi\s+temple\b", "temple", s)
     s = re.sub(r"\blakshman\b", "laxman", s)
     s = re.sub(r"\bamer\b", "amber", s)
     s = re.sub(r"\bfort\s+(?:and|&)\s+palace\b", "fort", s)
+    s = re.sub(r"\bsanthome\b", "san thome", s)
+    s = re.sub(r"\bcathedral\s+basilica\b", "basilica", s)
+    s = re.sub(r"\bsan\s+thome\s+cathedral\b", "san thome basilica", s)
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
     # Canonicalize known core landmarks within the destination so variations don't duplicate
     dest_lower = dest.lower() if dest else ""
@@ -395,7 +403,7 @@ def _is_multi_attraction_list_text(text: str, dest: str = "", current_landmark: 
         if not (cur_norm and (nm.lower() in cur_norm or cur_norm in nm.lower()))
     ]
     if len(distinct_named) >= 1 and cur_norm:
-        if re.search(r",\s*|\b(?:and|along\s+with|as\s+well\s+as|together\s+with|including|such\s+as)\b", lower):
+        if re.search(r",\s*|\b(?:and|or|along\s+with|as\s+well\s+as|together\s+with|including|such\s+as|plus)\b", lower):
             return True
     if len(distinct_named) >= 2:
         return True
@@ -748,7 +756,7 @@ CORE_IN_DESTINATION_LANDMARKS: Dict[str, List[str]] = {
     ],
     "chennai": [
         "kapaleeshwarar temple", "kapaleeswarar temple", "marina beach", "san thome basilica",
-        "santhome cathedral", "fort st george", "fort saint george", "government museum",
+        "fort st george", "fort saint george", "government museum",
         "guindy national park", "valluvar kottam", "elliot's beach", "elliots beach",
         "edward elliot's beach", "parthasarathy temple", "dakshinachitra", "national art gallery",
         "birla planetarium", "vadapalani andavar temple", "semmozhi poonga"
@@ -1370,6 +1378,7 @@ def classify_attraction_geography(
     # Source context grounding: if the source title or URL is dedicated to this destination
     # Guard: never ground a candidate as in_destination if its known location is outside this destination, or if it matches an excursion keyword
     is_known_out_of_destination = False
+    known_out_loc = None
     for lm_key, loc_info in KNOWN_PLACE_LOCATIONS.items():
         lm_norm = re.sub(r"['’\u2018\u2019\ufffd]+", "'", lm_key.lower()).strip()
         lm_alphanum = re.sub(r"[^a-z0-9]+", " ", lm_norm).strip()
@@ -1379,9 +1388,27 @@ def classify_attraction_geography(
             loc_country = loc_info.get("country", "").lower()
             if not ((loc_city and loc_city in valid_dest_tokens) or (loc_state and loc_state in valid_dest_tokens) or (loc_country and loc_country in valid_dest_tokens)):
                 is_known_out_of_destination = True
+                known_out_loc = loc_info
                 break
 
-    if not matched_in_dest and not is_known_out_of_destination and not any(kw in name_lower for kw in excursion_keywords) and (source_title or source_url):
+    if is_known_out_of_destination or any(kw in name_lower for kw in excursion_keywords):
+        out_state = (known_out_loc.get("state") or "").title() if known_out_loc else ""
+        excursion_note = (
+            f"Located in Andhra Pradesh (~115 km from {dest_primary}, approx 2.5-3 hours travel). Referenced as a regional excursion. Distance, transit route, and interstate travel logistics must be verified before scheduling."
+            if ("srikalahasti" in name_lower or "tirupati" in name_lower)
+            else (
+                f"Located in {out_state} outside {dest_primary}. Referenced as a regional excursion. Exact road distance and travel time are not verified in this crawl — check the linked source before scheduling."
+                if out_state
+                else f"Referenced as a regional excursion or outside central {dest_primary}. Exact road distance and travel time are not verified in this crawl — check the linked source before scheduling."
+            )
+        )
+        return (
+            "nearby_excursion",
+            f"Nearby Excursion • Verify Distance from {dest_primary}",
+            excursion_note
+        )
+
+    if not matched_in_dest and (source_title or source_url):
         src_context = f"{source_title} {source_url}".lower()
         if dest_key in src_context:
             matched_in_dest = True

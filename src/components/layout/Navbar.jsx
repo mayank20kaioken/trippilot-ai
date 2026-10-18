@@ -15,9 +15,6 @@ export default function Navbar({ onStartClick, currentView, onResetToHome }) {
             <span className="w-2.5 h-2.5 rounded-full bg-[#FFE600] inline-block mb-1 group-hover:scale-125 transition-transform" />
             <span>PILOT</span>
           </div>
-          <span className="hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/10 text-white/80 border border-white/15">
-            AZINHACK '26
-          </span>
         </button>
 
         {/* Minimalist center navigation */}

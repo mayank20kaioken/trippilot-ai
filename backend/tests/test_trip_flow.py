@@ -1703,6 +1703,56 @@ Lord Ramanujar Temple, Valluvar Kottam and the Great Rajiv Gandhi Memorial are p
                 assert "Valluvar Kottam" not in desc, f"Mixed excerpt must not leak into description: {desc}"
 
 
+def test_chennai_santhome_deduplication():
+    from backend.services.research_agent import _normalize_attraction_key
+    from backend.schemas import AttractionItem
+
+    k1 = _normalize_attraction_key("Santhome Cathedral Basilica", "Chennai")
+    k2 = _normalize_attraction_key("San Thome Basilica", "Chennai")
+    k3 = _normalize_attraction_key("Santhome Cathedral", "Chennai")
+    assert k1 == k2 == k3 == "san thome basilica", f"Santhome variations must normalize identically: {k1}, {k2}, {k3}"
+
+    cands = [
+        AttractionItem(
+            id="att-1",
+            name="Santhome Cathedral Basilica",
+            description="Referenced in source overview; detailed individual venue prose not provided in snippet.",
+            source_url="https://source1.com",
+            source_title="Source 1",
+            insider_tip="Visit in the morning",
+            evidence_quality="passing_mention"
+        ),
+        AttractionItem(
+            id="att-2",
+            name="San Thome Basilica",
+            description="Historic neo-Gothic Catholic minor basilica built over the tomb of Saint Thomas in Santhome, Chennai.",
+            source_url="https://source2.com",
+            source_title="Source 2",
+            insider_tip="Visit during evening mass",
+            evidence_quality="verified_grounded"
+        )
+    ]
+    seen_keys = set()
+    cleaned = []
+    for cand in cands:
+        norm_key = _normalize_attraction_key(cand.name, "Chennai")
+        if norm_key in seen_keys:
+            existing = next((a for a in cleaned if _normalize_attraction_key(a.name, "Chennai") == norm_key), None)
+            if existing and existing.evidence_quality == "passing_mention" and cand.evidence_quality == "verified_grounded":
+                existing.description = cand.description
+                existing.source_url = cand.source_url
+                existing.source_title = cand.source_title
+                existing.evidence_quality = "verified_grounded"
+            continue
+        seen_keys.add(norm_key)
+        cleaned.append(cand)
+
+    assert len(cleaned) == 1, f"Expected 1 deduplicated card, got {len(cleaned)}"
+    assert "tomb of Saint Thomas" in cleaned[0].description
+    assert cleaned[0].evidence_quality == "verified_grounded"
+
+
+
 
 
 
